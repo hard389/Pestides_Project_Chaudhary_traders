@@ -129,7 +129,7 @@ export default function LoadingPage() {
           <h1 className={`text-4xl font-extrabold tracking-tight bg-gradient-to-r from-white via-orange-400 to-amber-500 bg-clip-text text-transparent drop-shadow-sm ${
             !isDark && 'from-slate-800 via-orange-600 to-amber-600'
           }`}>
-            EduTrack
+            Chaudhary Traders
           </h1>
           <Sparkles className={`w-4 h-4 ${isDark ? 'text-orange-400' : 'text-orange-500'} animate-pulse`} style={{ animationDelay: '0.4s' }} />
         </div>
@@ -141,7 +141,7 @@ export default function LoadingPage() {
         <p className={`text-xs font-bold tracking-[0.3em] uppercase transition-colors duration-500 ${
           isDark ? 'text-slate-400' : 'text-slate-500'
         }`}>
-          Track <span className="text-orange-500">•</span> Learn <span className="text-orange-500">•</span> Grow
+          Chaudhary <span className="text-orange-500"></span> Khalil <span className="text-orange-500"></span> Tahir
         </p>
 
         {/* --- PREMIUM MODERN SPINNER & LOADER STATUS --- */}
