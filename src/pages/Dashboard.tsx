@@ -32,7 +32,9 @@ import {
   BellRing,
   Calendar,
   Info,
-  RotateCcw
+  RotateCcw,
+  Download,
+  Smartphone
 } from 'lucide-react';
 
 // Firebase Configuration
@@ -63,6 +65,10 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(false);
+
+  // PWA Install Prompt State
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isInstallable, setIsInstallable] = useState(false);
 
   // Firestore Data States
   const [loading, setLoading] = useState(true);
@@ -98,6 +104,31 @@ export default function Dashboard() {
   // Beautiful "Data Not Found" Notification Toast
   const [showNotFoundToast, setShowNotFoundToast] = useState(false);
   const [notFoundMessage, setNotFoundMessage] = useState('');
+
+  // PWA Install Prompt Event Listener
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setIsInstallable(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallPWA = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setIsInstallable(false);
+    }
+    setDeferredPrompt(null);
+  };
 
   // Authentication Listener
   useEffect(() => {
@@ -465,6 +496,17 @@ export default function Dashboard() {
           </span>
 
           <div className="flex items-center gap-3">
+            {/* PREMIUM PWA INSTALL BUTTON */}
+            {isInstallable && (
+              <button
+                onClick={handleInstallPWA}
+                className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-3 py-1.5 text-white font-extrabold text-xs shadow-[0_0_15px_rgba(249,115,22,0.4)] hover:scale-105 active:scale-95 transition-all"
+              >
+                <Download className="h-4 w-4" />
+                <span className="hidden sm:inline">Install App</span>
+              </button>
+            )}
+
             <button
               onClick={() => setIsDark(!isDark)}
               className="flex h-8 w-14 items-center rounded-full bg-slate-200/80 p-1 dark:bg-slate-800 border border-slate-300/50 dark:border-slate-700/50"
@@ -504,13 +546,26 @@ export default function Dashboard() {
 
         {/* HERO TITLE CARD */}
         <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-amber-50/80 via-white to-orange-50/40 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-6 border-2 border-orange-500/80 shadow-[0_0_30px_rgba(249,115,22,0.25)]">
-          <div className="space-y-1">
-            <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">
-              Chaudhary Traders
-            </h1>
-            <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
-              Agri-Chemicals, Pesticides & Fertilizer Management System
-            </p>
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1">
+              <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">
+                Chaudhary Traders
+              </h1>
+              <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                Agri-Chemicals, Pesticides & Fertilizer Management System
+              </p>
+            </div>
+
+            {/* PREMIUM PWA INSTALL BADGE IN HERO CARD */}
+            {isInstallable && (
+              <button
+                onClick={handleInstallPWA}
+                className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 px-3.5 py-2 text-white font-extrabold text-xs shadow-[0_0_20px_rgba(249,115,22,0.5)] hover:scale-105 active:scale-95 transition-all shrink-0"
+              >
+                <Smartphone className="h-4 w-4" />
+                <span>Install App</span>
+              </button>
+            )}
           </div>
 
           <div className="mt-5 flex items-center gap-3">
