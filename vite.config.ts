@@ -3,8 +3,7 @@ import react from "@vitejs/plugin-react-swc";
 import { VitePWA } from "vite-plugin-pwa";
 import path from "path";
 
-// https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig({
   server: {
     host: "::",
     port: 8080,
@@ -13,40 +12,40 @@ export default defineConfig(({ mode }) => ({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.ico", "logo.png", "apple-touch-icon.png"],
+      injectRegister: "auto",
+      manifestFilename: "manifest.webmanifest",
+      devOptions: {
+        enabled: true,
+      },
       manifest: {
-        name: "Curriflex - Intelligent Timetable Management",
-        short_name: "Curriflex",
-        description: "Smart timetable generation and management for colleges and universities",
+        name: "Chaudhary Traders",
+        short_name: "Chaudhary Traders",
+        description: "Agri-Chemicals, Pesticides & Fertilizer Management System",
         theme_color: "#ffffff",
         background_color: "#ffffff",
         display: "standalone",
-        scope: "/",
         start_url: "/",
+        scope: "/",
         icons: [
           {
             src: "/pwa-192x192.png",
             sizes: "192x192",
             type: "image/png",
+            purpose: "any"
           },
           {
             src: "/pwa-512x512.png",
             sizes: "512x512",
             type: "image/png",
-          },
-          {
-            src: "/pwa-512x512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "any maskable",
-          },
-        ],
-      },
-    }),
+            purpose: "maskable"
+          }
+        ]
+      }
+    })
   ],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
   },
-}));
+});
