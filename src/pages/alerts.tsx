@@ -189,13 +189,15 @@ export default function Notifications() {
     setTimeout(() => setShowToast(false), 3000);
   };
 
+  // Remove notification when marked as read
   const markAsRead = (id: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    setNotifications(prev => prev.filter(n => n.id !== id));
   };
 
+  // Clear all notifications when marking all as read
   const markAllAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    triggerToast("All notifications marked as read!");
+    setNotifications([]);
+    triggerToast("All notifications cleared!");
   };
 
   const sendWhatsAppReminder = (phone: string, customer: string, amount: number) => {

@@ -31,16 +31,15 @@ import {
   Banknote,
   Receipt,
   User,
-  CalendarDays,
   Filter,
   DollarSign,
   History,
   Clock,
   Check,
   Eye,
-  ShoppingBag,
-  TrendingUp,
-  Award
+  Printer,
+  FileText,
+  Layers
 } from 'lucide-react';
 
 // Firebase Configuration
@@ -113,6 +112,13 @@ export default function CreditCustomers() {
   // Complete Customer History Modal State
   const [historyCustomerGroup, setHistoryCustomerGroup] = useState<CustomerGroup | null>(null);
 
+  // Generate Invoice Printable Modal State
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [invoiceTimeframe, setInvoiceTimeframe] = useState<'today' | '3days' | 'week' | '15days' | 'month'>('today');
+  // Option: 'credit' (Only Credit), 'paid' (Only Payable / Paid), 'all' (Payable + Credit / All)
+  // Default set to 'credit'
+  const [invoiceType, setInvoiceType] = useState<'credit' | 'paid' | 'all'>('credit');
+
   // Per-card pagination state for order lists: { [customerName]: currentPage }
   const [cardPages, setCardPages] = useState<{ [key: string]: number }>({});
 
@@ -177,7 +183,7 @@ export default function CreditCustomers() {
     setTimeout(() => setShowSuccessToast(false), 3500);
   };
 
-  // Grouping Sales per Customer & Filtering by Time
+  // Grouping Sales per Customer & Filtering STRICTLY ONLY CREDIT CUSTOMERS (Exclude Fully Paid)
   const customerGroups = useMemo(() => {
     const groupsMap: { [key: string]: CustomerGroup } = {};
     const now = new Date();
@@ -218,7 +224,7 @@ export default function CreditCustomers() {
       }
     });
 
-    // Filter by Search Query & Active Debts
+    // ONLY FETCH CREDIT CUSTOMERS NOT PAID CUSTOMERS (totalCredit > 0)
     return Object.values(groupsMap).filter(group => {
       const matchesName = group.customerName.toLowerCase().includes(searchQuery.toLowerCase());
       const hasCredit = group.totalCredit > 0;
@@ -280,6 +286,263 @@ export default function CreditCustomers() {
     } finally {
       setIsSubmittingPayment(false);
     }
+  };
+
+  // Generate & Print Invoice Statement according to Selected Invoice Type & Timeframe
+  const handleGeneratePrintInvoice = () => {
+    const now = new Date();
+    let maxDays = 0;
+    let timeframeLabel = "Sales Invoice";
+
+    if (invoiceTimeframe === 'today') {
+      maxDays = 0;
+      timeframeLabel = "Today";
+    } else if (invoiceTimeframe === '3days') {
+      maxDays = 3;
+      timeframeLabel = "Previous 3 Days";
+    } else if (invoiceTimeframe === 'week') {
+      maxDays = 7;
+      timeframeLabel = "Full Week";
+    } else if (invoiceTimeframe === '15days') {
+      maxDays = 15;
+      timeframeLabel = "15 Days";
+    } else if (invoiceTimeframe === 'month') {
+      maxDays = 30;
+      timeframeLabel = "1 Month";
+    }
+
+    let typeLabel = "Credit Only";
+    if (invoiceType === 'paid') typeLabel = "Payable / Paid Only";
+    if (invoiceType === 'all') typeLabel = "Payable + Credit (All)";
+
+    const reportTitle = `${timeframeLabel} Sales - ${typeLabel}`;
+
+    // Filter sales by Timeframe & Invoice Type
+    const filtered = salesRecords.filter((sale) => {
+      const saleDate = new Date(sale.date);
+      let matchesTime = false;
+
+      if (invoiceTimeframe === 'today') {
+        matchesTime = saleDate.toDateString() === now.toDateString();
+      } else {
+        const diffTime = now.getTime() - saleDate.getTime();
+        const diffDays = diffTime / (1000 * 3600 * 24);
+        matchesTime = diffDays >= 0 && diffDays <= maxDays;
+      }
+
+      if (!matchesTime) return false;
+
+      if (invoiceType === 'credit') {
+        return sale.creditAmount > 0;
+      } else if (invoiceType === 'paid') {
+        return sale.paidAmount > 0;
+      } else { // 'all'
+        return true;
+      }
+    });
+
+    const totalGrand = filtered.reduce((acc, s) => acc + s.grandTotal, 0);
+    const totalPaid = filtered.reduce((acc, s) => acc + s.paidAmount, 0);
+    const totalCredit = filtered.reduce((acc, s) => acc + s.creditAmount, 0);
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Chaudhary Traders - ${reportTitle}</title>
+          <style>
+            body {
+              font-family: system-ui, -apple-system, sans-serif;
+              color: #1e293b;
+              margin: 0;
+              padding: 40px;
+              background: #ffffff;
+            }
+            .header {
+              text-align: center;
+              margin-bottom: 20px;
+            }
+            .company-name {
+              font-size: 28px;
+              font-weight: 900;
+              letter-spacing: 1px;
+              color: #0f172a;
+              margin: 0;
+            }
+            .subtitle {
+              font-size: 14px;
+              font-weight: 700;
+              color: #f97316;
+              margin-top: 4px;
+            }
+            .divider {
+              height: 3px;
+              background: #f97316;
+              margin: 15px 0 25px 0;
+              border-radius: 2px;
+            }
+            .meta-box {
+              border: 1px solid #e2e8f0;
+              border-radius: 16px;
+              padding: 16px 24px;
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 30px;
+              background-color: #f8fafc;
+              font-size: 13px;
+              line-height: 1.6;
+            }
+            .meta-box p {
+              margin: 2px 0;
+            }
+            .meta-left { font-weight: 600; }
+            .meta-right { text-align: right; font-weight: 600; }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-bottom: 30px;
+              font-size: 13px;
+            }
+            th {
+              text-align: left;
+              padding: 12px 10px;
+              border-bottom: 2px solid #cbd5e1;
+              font-weight: 800;
+              color: #334155;
+            }
+            td {
+              padding: 12px 10px;
+              border-bottom: 1px solid #e2e8f0;
+              font-weight: 600;
+              vertical-align: top;
+            }
+            .text-green { color: #10b981; }
+            .text-red { color: #f43f5e; }
+            .summary-card {
+              float: right;
+              width: 320px;
+              border: 1px solid #fed7aa;
+              border-radius: 16px;
+              padding: 16px 20px;
+              background: #fff;
+              margin-top: 10px;
+              box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            }
+            .summary-row {
+              display: flex;
+              justify-content: space-between;
+              font-size: 13px;
+              font-weight: 700;
+              margin-bottom: 8px;
+            }
+            .dotted-line {
+              border-bottom: 1px dashed #cbd5e1;
+              margin: 10px 0;
+            }
+            .summary-row.net {
+              font-size: 15px;
+              color: #f97316;
+              font-weight: 900;
+            }
+            @media print {
+              body { padding: 20px; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1 class="company-name">CHAUDHARY TRADERS</h1>
+            <div class="subtitle">Pesticides Stock & Sales Statement</div>
+          </div>
+          <div class="divider"></div>
+
+          <div class="meta-box">
+            <div class="meta-left">
+              <p><strong>Address:</strong> Chak No 389 Jb Toba Tek Singh Punjab Pakistan</p>
+              <p><strong>Phone:</strong> +92 3261770389</p>
+              <p><strong>Email:</strong> admin@gmail.com</p>
+            </div>
+            <div class="meta-right">
+              <p><strong>Report:</strong> ${reportTitle}</p>
+              <p><strong>Type:</strong> ${typeLabel.toUpperCase()}</p>
+              <p><strong>Date Generated:</strong> ${new Date().toLocaleDateString()}</p>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Invoice ID</th>
+                <th>Customer Name</th>
+                <th>Date</th>
+                <th>Items Sold</th>
+                <th>Grand Total</th>
+                ${invoiceType !== 'credit' ? '<th>Paid Amount</th>' : ''}
+                ${invoiceType !== 'paid' ? '<th>Credit Amount</th>' : ''}
+              </tr>
+            </thead>
+            <tbody>
+              ${filtered.length === 0 ? `<tr><td colspan="7" style="text-align:center; padding: 20px; color: #94a3b8;">No matching records found for this selection.</td></tr>` : ''}
+              ${filtered.map(s => {
+                const itemsText = s.items.map(i => `${i.name} (${i.quantity}x)`).join(', ');
+                return `
+                  <tr>
+                    <td>INV-${s.id.slice(-6)}</td>
+                    <td><strong>${s.customerName}</strong></td>
+                    <td>${new Date(s.date).toLocaleDateString()}</td>
+                    <td>${itemsText}</td>
+                    <td>Rs. ${s.grandTotal}</td>
+                    ${invoiceType !== 'credit' ? `<td class="${s.paidAmount > 0 ? 'text-green' : ''}">Rs. ${s.paidAmount}</td>` : ''}
+                    ${invoiceType !== 'paid' ? `<td class="${s.creditAmount > 0 ? 'text-red' : ''}">Rs. ${s.creditAmount}</td>` : ''}
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+
+          <div style="clear: both;"></div>
+
+          <div class="summary-card">
+            <div class="summary-row">
+              <span>Total Grand Sales:</span>
+              <span>Rs. ${totalGrand}</span>
+            </div>
+            ${invoiceType !== 'credit' ? `
+              <div class="summary-row text-green">
+                <span>Total Paid Amount:</span>
+                <span>Rs. ${totalPaid}</span>
+              </div>
+            ` : ''}
+            ${invoiceType !== 'paid' ? `
+              <div class="summary-row text-red">
+                <span>Total Credit Amount:</span>
+                <span>Rs. ${totalCredit}</span>
+              </div>
+            ` : ''}
+            <div class="dotted-line"></div>
+            <div class="summary-row net">
+              <span>
+                ${invoiceType === 'credit' ? 'Net Credit Outstanding:' : invoiceType === 'paid' ? 'Net Paid Collected:' : 'Net Overall Balance:'}
+              </span>
+              <span>Rs. ${invoiceType === 'paid' ? totalPaid : totalCredit}</span>
+            </div>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+    setShowInvoiceModal(false);
   };
 
   const navigationTabs = [
@@ -350,10 +613,10 @@ export default function CreditCustomers() {
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-8">
         
-        {/* HERO BANNER CARD */}
+        {/* HERO BANNER CARD WITH GENERATE INVOICE ACTION */}
         <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-amber-50/80 via-white to-orange-50/40 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-6 md:p-8 border-2 border-orange-500/80 shadow-[0_0_30px_rgba(249,115,22,0.25)]">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/30">
                 <CreditCard className="h-3.5 w-3.5" />
                 <span className="text-[10px] font-black uppercase tracking-wider">CREDIT / UDHAAR MANAGER</span>
@@ -364,6 +627,16 @@ export default function CreditCustomers() {
               <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
                 Track pending balances, inspect complete buying history & receive payments.
               </p>
+
+              {/* GENERATE INVOICE BUTTON */}
+              <div className="pt-2">
+                <button
+                  onClick={() => setShowInvoiceModal(true)}
+                  className="px-6 py-3.5 rounded-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-black text-xs uppercase tracking-wider shadow-lg shadow-orange-500/30 transition-all transform hover:scale-105 active:scale-95 flex items-center gap-2"
+                >
+                  <FileText className="h-4 w-4" /> GENERATE INVOICE
+                </button>
+              </div>
             </div>
 
             {/* OVERALL TOTAL STATS BADGE */}
@@ -432,7 +705,7 @@ export default function CreditCustomers() {
         ) : customerGroups.length === 0 ? (
           <div className="text-center py-16 bg-white dark:bg-[#0c1222] rounded-[2.5rem] border border-dashed border-slate-200 dark:border-slate-800 space-y-3">
             <UserCheck className="h-12 w-12 text-emerald-500 mx-auto opacity-80" />
-            <h3 className="text-base font-black text-slate-700 dark:text-slate-200">No Credit Records Found</h3>
+            <h3 className="text-base font-black text-slate-700 dark:text-slate-200">No Credit Customers Found</h3>
             <p className="text-xs font-bold text-slate-400 max-w-sm mx-auto">
               {searchQuery || dateFilter !== 'all' 
                 ? 'No matching credit customers found for the selected filter.'
@@ -583,6 +856,99 @@ export default function CreditCustomers() {
           </div>
         )}
       </main>
+
+      {/* GENERATE INVOICE MODAL WITH TYPE SELECTION (CREDIT / PAYABLE / ALL) */}
+      {showInvoiceModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
+          <div className="bg-white dark:bg-[#0c1222] border-2 border-orange-500/50 rounded-[2.5rem] p-6 max-w-md w-full shadow-[0_0_50px_rgba(249,115,22,0.3)] space-y-6 max-h-[90vh] overflow-y-auto">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <Printer className="h-6 w-6 text-orange-500" />
+                <h3 className="text-xl font-black text-slate-900 dark:text-white">
+                  Generate Invoice
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowInvoiceModal(false)}
+                className="p-2 rounded-xl bg-slate-100 dark:bg-[#070b13] hover:text-orange-500 transition-all"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* SECTION 1: INVOICE TYPE OPTIONS (CREDIT / PAYABLE / ALL) */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Layers className="h-3.5 w-3.5 text-orange-500" /> Select Invoice Type:
+              </label>
+
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'credit', label: 'Only Credit' },
+                  { id: 'paid', label: 'Only Payable' },
+                  { id: 'all', label: 'Payable + Credit' }
+                ].map((type) => {
+                  const isSelected = invoiceType === type.id;
+                  return (
+                    <button
+                      key={type.id}
+                      onClick={() => setInvoiceType(type.id as any)}
+                      className={`py-3 px-2 rounded-2xl font-black text-xs text-center border-2 transition-all ${
+                        isSelected
+                          ? 'bg-orange-500 text-white border-orange-500 shadow-md shadow-orange-500/20 scale-[1.02]'
+                          : 'bg-slate-50 dark:bg-[#070b13] border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300'
+                      }`}
+                    >
+                      {type.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <p className="text-xs font-bold text-slate-500 dark:text-slate-400 pt-1">
+              Select time period to generate printable official stock invoice statement:
+            </p>
+
+            {/* SECTION 2: TIMEFRAME SELECTOR OPTIONS */}
+            <div className="space-y-2.5">
+              {[
+                { id: 'today', label: 'Today' },
+                { id: '3days', label: 'Previous Three Days' },
+                { id: 'week', label: 'Full Week' },
+                { id: '15days', label: '15 Days' },
+                { id: 'month', label: '1 Month' },
+              ].map((option) => {
+                const isSelected = invoiceTimeframe === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    onClick={() => setInvoiceTimeframe(option.id as any)}
+                    className={`w-full py-3.5 px-5 rounded-2xl font-black text-sm text-left flex items-center justify-between border-2 transition-all ${
+                      isSelected
+                        ? 'bg-orange-500/10 dark:bg-orange-500/20 border-orange-500 text-orange-600 dark:text-orange-400 shadow-md'
+                        : 'bg-slate-50 dark:bg-[#070b13] border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300'
+                    }`}
+                  >
+                    <span>{option.label}</span>
+                    {isSelected && <Check className="h-4 w-4 text-orange-500 stroke-[3]" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Generate & Print Action Button */}
+            <button
+              onClick={handleGeneratePrintInvoice}
+              className="w-full py-4 rounded-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-black text-xs uppercase tracking-wider shadow-lg shadow-orange-500/30 transition-all flex items-center justify-center gap-2 transform hover:scale-[1.01] active:scale-95"
+            >
+              <Printer className="h-4 w-4" /> GENERATE & PRINT INVOICE
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* COMPLETE CUSTOMER HISTORY MODAL */}
       {historyCustomerGroup && (
