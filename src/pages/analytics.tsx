@@ -58,7 +58,9 @@ export default function Analytics() {
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(false);
   const [activeTab, setActiveTab] = useState('analytics');
-  const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d' | 'all'>('30d');
+  
+  // Time Range Filter: 7 Days, 15 Days, 30 Days, All Time
+  const [timeRange, setTimeRange] = useState<'7d' | '15d' | '30d' | 'all'>('30d');
 
   // Loading & Data State
   const [loading, setLoading] = useState(true);
@@ -76,7 +78,7 @@ export default function Analytics() {
       if (user && user.email) {
         setCurrentUserEmail(user.email);
       } else {
-        const savedEmail = localStorage.getItem('userEmail') || 'alitahir243715@gmail.com';
+        const savedEmail = localStorage.getItem('userEmail') || 'admin@gmail.com';
         setCurrentUserEmail(savedEmail);
       }
     });
@@ -96,7 +98,7 @@ export default function Analytics() {
         fetchedSales.push({ id: doc.id, ...doc.data() });
       });
 
-      // 2. Fetch Categories & Inventory
+      // 2. Fetch Categories & Inventory Products
       const invRef = collection(db, 'users', currentUserEmail, 'inventory_categories');
       const invSnap = await getDocs(invRef);
       const fetchedCategories: any[] = [];
@@ -124,7 +126,7 @@ export default function Analytics() {
     setTimeout(() => setShowErrorToast(false), 3500);
   };
 
-  // Flattened List of all products from inventory categories
+  // Extract all flattened products from inventory categories
   const allProducts = useMemo(() => {
     const products: any[] = [];
     inventoryCategories.forEach((catDoc) => {
@@ -143,90 +145,147 @@ export default function Analytics() {
     return products;
   }, [inventoryCategories]);
 
-  // Set initial selected product when products load
+  // Set default selected product once products are loaded
   useEffect(() => {
     if (allProducts.length > 0 && !selectedProductId) {
       setSelectedProductId(String(allProducts[0].id));
     }
   }, [allProducts, selectedProductId]);
 
-  // Top 4 Products Lowest in Quantity
+  // Low Stock Alert: Top 4 Products lowest in quantity
   const lowestQuantityProducts = useMemo(() => {
     return [...allProducts]
       .sort((a, b) => a.quantityNum - b.quantityNum)
       .slice(0, 4);
   }, [allProducts]);
 
-  // Compute Aggregated Analytics Stats & Graphs with Exact Cost Matching
+  // Filter Sales By Selected Time Range (7 Days, 15 Days, 30 Days, All Time)
+  const filteredSalesData = useMemo(() => {
+    if (timeRange === 'all') return salesData;
+
+    const now = new Date().getTime();
+    const daysLimit = timeRange === '7d' ? 7 : timeRange === '15d' ? 15 : 30;
+    const thresholdMs = daysLimit * 24 * 60 * 60 * 1000;
+
+    return salesData.filter((sale) => {
+      let saleTime = 0;
+      if (sale.date) {
+        saleTime = new Date(sale.date).getTime();
+      } else if (sale.createdAt?.seconds) {
+        saleTime = sale.createdAt.seconds * 1000;
+      } else if (sale.createdAt) {
+        saleTime = new Date(sale.createdAt).getTime();
+      } else {
+        saleTime = Date.now();
+      }
+
+      return (now - saleTime) <= thresholdMs;
+    });
+  }, [salesData, timeRange]);
+
+  // Map Product Cost Prices and Compute Profit Analytics & Chart Data
   const computedAnalytics = useMemo(() => {
     let totalRevenue = 0;
     let totalCost = 0;
     let totalItemsSold = 0;
-    const timelineMap: { [dateKey: string]: { date: string; sales: number; profit: number; orders: number } } = {};
-
-    // Map product names and IDs directly to cost prices from inventory schema
-    const productCostByName: { [name: string]: number } = {};
+    
+    // Hash map for direct lookup by product ID and normalized Name
     const productCostById: { [id: string]: number } = {};
+    const productCostByName: { [name: string]: number } = {};
 
-    allProducts.forEach((p) => {
-      if (p.name) productCostByName[p.name.trim().toLowerCase()] = p.costPriceNum;
-      if (p.id) productCostById[String(p.id)] = p.costPriceNum;
+    allProducts.forEach((prod) => {
+      if (prod.id) productCostById[String(prod.id)] = prod.costPriceNum;
+      if (prod.name) productCostByName[prod.name.trim().toLowerCase()] = prod.costPriceNum;
     });
 
-    salesData.forEach((sale) => {
-      const saleDate = sale.createdAt?.seconds 
-        ? new Date(sale.createdAt.seconds * 1000) 
-        : new Date(sale.timestamp || Date.now());
-      
-      const dateKey = saleDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const saleTotal = Number(sale.grandTotal || sale.totalAmount || 0);
+    // Timeline Aggregation Map
+    const timelineMap: { 
+      [dateKey: string]: { 
+        timestamp: number;
+        date: string; 
+        sales: number; 
+        profit: number; 
+        orders: number 
+      } 
+    } = {};
 
-      totalRevenue += saleTotal;
+    filteredSalesData.forEach((sale) => {
+      let saleDateObj: Date;
+      if (sale.date) {
+        saleDateObj = new Date(sale.date);
+      } else if (sale.createdAt?.seconds) {
+        saleDateObj = new Date(sale.createdAt.seconds * 1000);
+      } else {
+        saleDateObj = new Date();
+      }
 
-      let saleCost = 0;
-      if (Array.isArray(sale.items)) {
+      const dateKey = saleDateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const saleGrandTotal = Number(sale.grandTotal || sale.totalAmount || 0);
+
+      let currentSaleRevenue = 0;
+      let currentSaleCost = 0;
+
+      if (Array.isArray(sale.items) && sale.items.length > 0) {
         sale.items.forEach((item: any) => {
           const qty = Number(item.quantity || 1);
-          totalItemsSold += qty;
+          const itemSellingPrice = Number(item.price || item.salePrice || 0);
           
-          // Match cost price by ID first, then Name, then Item cost, or fallback
-          const itemNameKey = item.name ? String(item.name).trim().toLowerCase() : '';
-          const matchedCost = productCostById[String(item.id)] ?? productCostByName[itemNameKey] ?? Number(item.costPrice || 0);
+          // Match cost price from product lookup first, or fallback to item cost field
+          const itemNameNorm = item.name ? String(item.name).trim().toLowerCase() : '';
+          const matchedCostPrice = productCostById[String(item.id)] ?? productCostByName[itemNameNorm] ?? Number(item.costPrice || 0);
 
-          saleCost += matchedCost * qty;
+          currentSaleRevenue += itemSellingPrice * qty;
+          currentSaleCost += matchedCostPrice * qty;
+          totalItemsSold += qty;
         });
       } else {
-        saleCost = 0;
+        currentSaleRevenue = saleGrandTotal;
+        currentSaleCost = 0;
       }
 
-      totalCost += saleCost;
-      const profit = saleTotal - saleCost;
+      // Fallback if item prices sum to 0
+      if (currentSaleRevenue === 0 && saleGrandTotal > 0) {
+        currentSaleRevenue = saleGrandTotal;
+      }
+
+      totalRevenue += currentSaleRevenue;
+      totalCost += currentSaleCost;
+
+      const currentSaleProfit = currentSaleRevenue - currentSaleCost;
 
       if (!timelineMap[dateKey]) {
-        timelineMap[dateKey] = { date: dateKey, sales: 0, profit: 0, orders: 0 };
+        timelineMap[dateKey] = {
+          timestamp: saleDateObj.getTime(),
+          date: dateKey,
+          sales: 0,
+          profit: 0,
+          orders: 0
+        };
       }
-      timelineMap[dateKey].sales += saleTotal;
-      timelineMap[dateKey].profit += profit;
+
+      timelineMap[dateKey].sales += currentSaleRevenue;
+      timelineMap[dateKey].profit += currentSaleProfit;
       timelineMap[dateKey].orders += 1;
     });
 
-    // Exact Profit = Total Revenue - Total Cost
     const netProfit = totalRevenue - totalCost;
     const profitMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100).toFixed(1) : '0';
-    const averageOrderValue = salesData.length > 0 ? (totalRevenue / salesData.length).toFixed(0) : '0';
+    const averageOrderValue = filteredSalesData.length > 0 ? (totalRevenue / filteredSalesData.length).toFixed(0) : '0';
 
-    const revenueTimeline = Object.values(timelineMap).slice(-10);
+    // Sort timeline chronologically
+    const revenueTimeline = Object.values(timelineMap).sort((a, b) => a.timestamp - b.timestamp);
 
     return {
       totalRevenue,
       netProfit,
+      totalCost,
       profitMargin,
       totalItemsSold,
-      totalOrders: salesData.length,
+      totalOrders: filteredSalesData.length,
       averageOrderValue,
       revenueTimeline
     };
-  }, [salesData, allProducts, timeRange]);
+  }, [filteredSalesData, allProducts]);
 
   // Selected Product Statistics for Circular Ring Chart
   const selectedProductStats = useMemo(() => {
@@ -245,10 +304,13 @@ export default function Analytics() {
     }
 
     let soldQty = 0;
-    salesData.forEach((sale) => {
+    filteredSalesData.forEach((sale) => {
       if (Array.isArray(sale.items)) {
         sale.items.forEach((item: any) => {
-          if (String(item.id) === String(product.id) || (item.name && item.name.trim().toLowerCase() === product.name?.trim().toLowerCase())) {
+          const isIdMatch = String(item.id) === String(product.id);
+          const isNameMatch = item.name && item.name.trim().toLowerCase() === product.name?.trim().toLowerCase();
+          
+          if (isIdMatch || isNameMatch) {
             soldQty += Number(item.quantity || 1);
           }
         });
@@ -268,9 +330,9 @@ export default function Analytics() {
         { name: 'Remaining Quantity', value: remainingQty, color: '#f97316' }
       ]
     };
-  }, [allProducts, selectedProductId, salesData]);
+  }, [allProducts, selectedProductId, filteredSalesData]);
 
-  // Navigation Items matching standard style
+  // Navigation Items
   const navigationTabs = [
     { id: 'home', label: 'Home', icon: Home, href: '/' },
     { id: 'add', label: 'Add Product', icon: PlusCircle, href: '/add-product' },
@@ -331,7 +393,7 @@ export default function Analytics() {
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-8">
         
-        {/* HERO BANNER CARD */}
+        {/* HERO BANNER CARD WITH DYNAMIC 7, 15, 30 DAYS FILTERS */}
         <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-amber-50/80 via-white to-orange-50/40 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-6 md:p-8 border-2 border-orange-500/80 shadow-[0_0_30px_rgba(249,115,22,0.25)]">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
             <div className="space-y-2">
@@ -343,24 +405,24 @@ export default function Analytics() {
                 Business Performance & Analytics
               </h1>
               <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                Real-time sales velocity, revenue trends, profit breakdowns, and order statistics.
+                Real-time sales velocity, revenue trends, profit breakdowns, and low stock indicators.
               </p>
             </div>
 
-            {/* TIME-RANGE SELECTOR */}
-            <div className="bg-white/80 dark:bg-[#070b13]/80 backdrop-blur-md p-1.5 rounded-2xl border border-orange-500/30 flex items-center gap-1 shadow-lg self-start md:self-auto">
+            {/* TIME RANGE SELECTOR (7 Days, 15 Days, 30 Days, All Time) */}
+            <div className="bg-white/90 dark:bg-[#070b13]/90 backdrop-blur-md p-1.5 rounded-full border border-orange-500/30 flex items-center gap-1 shadow-lg self-start md:self-auto">
               {[
                 { id: '7d', label: '7 Days' },
+                { id: '15d', label: '15 Days' },
                 { id: '30d', label: '30 Days' },
-                { id: '90d', label: '90 Days' },
                 { id: 'all', label: 'All Time' }
               ].map((range) => (
                 <button
                   key={range.id}
                   onClick={() => setTimeRange(range.id as any)}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all ${
+                  className={`px-4 py-2 rounded-full text-xs font-black transition-all ${
                     timeRange === range.id
-                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-md'
+                      ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-[0_4px_15px_rgba(249,115,22,0.4)]'
                       : 'text-slate-500 dark:text-slate-400 hover:text-orange-500'
                   }`}
                 >
@@ -387,7 +449,7 @@ export default function Analytics() {
               </p>
               <div className="flex items-center gap-1 text-[11px] font-bold text-emerald-500 mt-1">
                 <TrendingUp className="h-3.5 w-3.5" />
-                <span>+12.5% growth</span>
+                <span>Active Period</span>
               </div>
             </div>
           </div>
@@ -445,32 +507,30 @@ export default function Analytics() {
 
         </div>
 
-        {/* REVENUE GRAPH & LOW STOCK CHARTS */}
+        {/* REVENUE GRAPH & LOW STOCK CARDS */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* MAIN AREA REVENUE CHART */}
+          {/* MAIN AREA REVENUE & PROFIT TRAJECTORY CHART */}
           <div className="lg:col-span-2 bg-white dark:bg-[#0c1222] p-6 rounded-[2.5rem] border border-slate-200/80 dark:border-slate-800/60 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-base font-black text-slate-900 dark:text-white">Revenue & Profit Trajectory</h3>
                 <p className="text-xs font-bold text-slate-400">Daily financial breakdown performance</p>
               </div>
-              <span className="text-xs font-black text-orange-500 bg-orange-500/10 px-3 py-1 rounded-full border border-orange-500/30">
+              <span className="text-xs font-black text-orange-500 bg-orange-500/10 px-3.5 py-1.5 rounded-full border border-orange-500/30">
                 Live Overview
               </span>
             </div>
 
             <div className="h-72 w-full pt-4">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={computedAnalytics.revenueTimeline.length > 0 ? computedAnalytics.revenueTimeline : [
-                  { date: 'Mon', sales: 12000, profit: 4000 },
-                  { date: 'Tue', sales: 19000, profit: 7000 },
-                  { date: 'Wed', sales: 15000, profit: 5000 },
-                  { date: 'Thu', sales: 22000, profit: 9000 },
-                  { date: 'Fri', sales: 30000, profit: 12000 },
-                  { date: 'Sat', sales: 25000, profit: 10000 },
-                  { date: 'Sun', sales: 35000, profit: 14000 },
-                ]}>
+                <AreaChart 
+                  data={
+                    computedAnalytics.revenueTimeline.length > 0 
+                      ? computedAnalytics.revenueTimeline 
+                      : [{ date: 'Today', sales: 0, profit: 0 }]
+                  }
+                >
                   <defs>
                     <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#f97316" stopOpacity={0.4}/>
@@ -489,8 +549,10 @@ export default function Analytics() {
                       backgroundColor: isDark ? '#0c1222' : '#ffffff', 
                       borderColor: '#f97316', 
                       borderRadius: '1rem',
-                      fontWeight: 'bold'
+                      fontWeight: 'bold',
+                      boxShadow: '0px 10px 25px rgba(0,0,0,0.1)'
                     }} 
+                    formatter={(value: any) => [`Rs. ${Number(value).toLocaleString()}`, '']}
                   />
                   <Area type="monotone" dataKey="sales" name="Sales (Rs)" stroke="#f97316" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
                   <Area type="monotone" dataKey="profit" name="Profit (Rs)" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorProfit)" />
@@ -499,7 +561,7 @@ export default function Analytics() {
             </div>
           </div>
 
-          {/* 4 LOWEST PRODUCTS CARD */}
+          {/* RECREATED LOW STOCK ALERT CARD (4 LOWEST QUANTITY PRODUCTS) */}
           <div className="bg-white dark:bg-[#0c1222] p-6 rounded-[2.5rem] border border-slate-200/80 dark:border-slate-800/60 shadow-sm flex flex-col justify-between space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -509,7 +571,7 @@ export default function Analytics() {
                 <p className="text-xs font-bold text-slate-400">4 Products lowest in quantity</p>
               </div>
               <span className="text-[10px] font-black uppercase tracking-wider text-rose-500 bg-rose-500/10 px-2.5 py-1 rounded-full border border-rose-500/20">
-                Action Needed
+                ACTION NEEDED
               </span>
             </div>
 
@@ -518,14 +580,14 @@ export default function Analytics() {
                 lowestQuantityProducts.map((prod, idx) => (
                   <div 
                     key={prod.id || idx} 
-                    className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 dark:bg-[#070b13] border border-slate-200/60 dark:border-slate-800/80 transition-all hover:border-amber-500/50"
+                    className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50/80 dark:bg-[#070b13] border border-slate-200/60 dark:border-slate-800/80 transition-all hover:border-amber-500/50"
                   >
                     <div className="flex items-center gap-3 overflow-hidden">
                       {prod.avatar ? (
-                        <img src={prod.avatar} alt={prod.name} className="h-9 w-9 rounded-xl object-cover shrink-0" />
+                        <img src={prod.avatar} alt={prod.name} className="h-10 w-10 rounded-xl object-cover shrink-0" />
                       ) : (
-                        <div className="h-9 w-9 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center font-black text-sm shrink-0">
-                          {prod.name?.charAt(0) || 'P'}
+                        <div className="h-10 w-10 rounded-xl bg-slate-800 text-white flex items-center justify-center font-black text-sm shrink-0 shadow-inner">
+                          {prod.name?.charAt(0).toUpperCase() || 'P'}
                         </div>
                       )}
                       <div className="truncate">
@@ -535,11 +597,7 @@ export default function Analytics() {
                     </div>
 
                     <div className="text-right shrink-0">
-                      <span className={`inline-block px-2.5 py-1 rounded-full text-xs font-black ${
-                        prod.quantityNum <= 5 
-                          ? 'bg-rose-500/10 text-rose-500 border border-rose-500/30' 
-                          : 'bg-amber-500/10 text-amber-500 border border-amber-500/30'
-                      }`}>
+                      <span className="inline-block px-3 py-1 rounded-full text-xs font-black bg-rose-500/10 text-rose-500 border border-rose-500/20">
                         {prod.quantityNum} left
                       </span>
                     </div>
@@ -547,7 +605,7 @@ export default function Analytics() {
                 ))
               ) : (
                 <div className="text-center py-8 text-xs font-bold text-slate-400">
-                  No product inventory records available.
+                  No products available in inventory.
                 </div>
               )}
             </div>
@@ -555,12 +613,12 @@ export default function Analytics() {
 
         </div>
 
-        {/* DYNAMIC PRODUCT SELECTOR & GLOWING ANIMATED CIRCULAR RING CHART */}
+        {/* DYNAMIC PRODUCT SELECTOR & CIRCULAR RING CHART */}
         <div className="bg-white dark:bg-[#0c1222] p-6 sm:p-8 rounded-[2.5rem] border border-slate-200/80 dark:border-slate-800/60 shadow-sm space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800/80 pb-5">
             <div>
               <h3 className="text-lg font-black text-slate-900 dark:text-white">Product Inventory Dynamics</h3>
-              <p className="text-xs font-bold text-slate-400">Select a product to view stock distribution & live ratio chart</p>
+              <p className="text-xs font-bold text-slate-400">Select a product to view stock ratio & unit metrics</p>
             </div>
 
             {/* PRODUCT FILTER DROPDOWN */}
@@ -581,10 +639,9 @@ export default function Analytics() {
             </div>
           </div>
 
-          {/* ANIMATED CIRCULAR RING CHART WITH TOTAL PRODUCTS AT CENTER */}
+          {/* ANIMATED CIRCULAR RING CHART */}
           <div className="flex flex-col md:flex-row items-center justify-around gap-8 py-4">
             <div className="relative w-64 h-64 flex items-center justify-center">
-              {/* Glowing Ambient Backgrounds */}
               <div className="absolute inset-0 rounded-full bg-emerald-500/10 blur-2xl animate-pulse"></div>
               <div className="absolute inset-2 rounded-full bg-orange-500/10 blur-xl"></div>
 
@@ -627,7 +684,7 @@ export default function Analytics() {
                 </RechartsPie>
               </ResponsiveContainer>
 
-              {/* Total Products Displayed in Center */}
+              {/* Total Units Displayed in Center */}
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none">
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total Products</span>
                 <span className="text-3xl font-black text-slate-900 dark:text-white drop-shadow-sm">
@@ -644,7 +701,7 @@ export default function Analytics() {
                   <div className="h-3 w-3 rounded-full bg-emerald-500 shadow-[0_0_10px_#10b981]"></div>
                   <div>
                     <p className="text-xs font-black text-emerald-600 dark:text-emerald-400">Sold Quantity</p>
-                    <p className="text-[10px] font-bold text-slate-400">Out of stock units</p>
+                    <p className="text-[10px] font-bold text-slate-400">Dispatched units</p>
                   </div>
                 </div>
                 <span className="text-xl font-black text-emerald-500">{selectedProductStats.soldQty}</span>
@@ -666,7 +723,7 @@ export default function Analytics() {
 
       </main>
 
-      {/* FLOATING BOTTOM NAVBAR - EXACT 0% UI CHANGE FROM REFERENCE */}
+      {/* FLOATING BOTTOM NAVBAR */}
       <div className="fixed bottom-6 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
         <nav className="w-full max-w-lg bg-white/95 dark:bg-[#0c1222]/95 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800/80 rounded-full shadow-[0_10px_40px_rgba(0,0,0,0.08)] px-4 py-2.5 flex items-center justify-between pointer-events-auto">
           {navigationTabs.map((tab) => {
@@ -681,12 +738,10 @@ export default function Analytics() {
                 className="flex flex-col items-center justify-center flex-1 transition-all duration-300"
               >
                 {isActive ? (
-                  /* Active state: Solid orange circular icon with glow shadow */
                   <div className="h-12 w-12 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-[0_4px_20px_rgba(249,115,22,0.6)] mb-1">
                     <IconComponent className="h-6 w-6 stroke-[2.2]" />
                   </div>
                 ) : (
-                  /* Inactive state: Minimal thin stroke icon */
                   <div className="h-9 w-9 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
                     <IconComponent className="h-5 w-5 stroke-[1.8]" />
                   </div>

@@ -9,6 +9,7 @@ import {
   getDoc,
   setDoc, 
   updateDoc,
+  deleteDoc,
   query,
   orderBy
 } from 'firebase/firestore';
@@ -20,7 +21,6 @@ import {
   Moon,
   ChevronRight,
   ChevronLeft,
-  Calendar as CalendarIcon,
   Home,
   PlusCircle,
   ShoppingCart,
@@ -29,15 +29,10 @@ import {
   Save,
   Sparkles,
   CheckCircle2,
-  AlertCircle,
-  ShieldCheck,
-  SlidersHorizontal,
-  Lock,
   AlertTriangle,
   X,
   ArrowLeft,
   Trash2,
-  Edit2,
   Plus,
   Minus,
   CreditCard,
@@ -45,8 +40,11 @@ import {
   Receipt,
   User,
   Package,
-  CalendarDays,
-  Filter
+  Printer,
+  FileText,
+  Calendar,
+  Layers,
+  RotateCcw
 } from 'lucide-react';
 
 // Firebase Configuration
@@ -64,7 +62,8 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-const CUSTOMERS_PER_PAGE = 10;
+// Strict Page Limit of 5 Records per Page as requested
+const CUSTOMERS_PER_PAGE = 5;
 
 interface CartItem {
   id: string;
@@ -85,6 +84,14 @@ interface CustomerBill {
   creditAmount: number;
 }
 
+interface MonthlySummary {
+  monthKey: string; // Format: "YYYY-MM" (e.g. "2026-06")
+  totalSales: number;
+  totalCredit: number;
+  totalPaid: number;
+  updatedAt: string;
+}
+
 export default function SellProduct() {
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(false);
@@ -100,19 +107,25 @@ export default function SellProduct() {
   const [quantity, setQuantity] = useState<number | ''>(1);
   const [unitPrice, setUnitPrice] = useState<number | ''>('');
 
-  // Cart & Editing States
+  // Cart States
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
 
   // Payment States
   const [paymentType, setPaymentType] = useState<'CASH' | 'CREDIT'>('CASH');
   const [paidAmountInput, setPaidAmountInput] = useState<number | ''>('');
 
-  // Saved Customers / Bills Data
+  // Saved Customers / Bills & Monthly Summaries
   const [customerBills, setCustomerBills] = useState<CustomerBill[]>([]);
+  const [monthlySummaries, setMonthlySummaries] = useState<Record<string, MonthlySummary>>({});
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
-  const [dayFilter, setDayFilter] = useState<number | ''>('');
-  const [thisMonthOnly, setThisMonthOnly] = useState(false);
+  
+  // Date Filters
+  const [dateFilterRange, setDateFilterRange] = useState<'today' | '3days' | 'week' | '15days' | 'month'>('today');
   const [customerPage, setCustomerPage] = useState(1);
+
+  // Invoice Generator Modal States
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [invoiceRange, setInvoiceRange] = useState<'today' | '3days' | 'week' | '15days' | 'month'>('today');
 
   // UI Toast & Modal States
   const [showSuccessToast, setShowSuccessToast] = useState(false);
@@ -135,13 +148,13 @@ export default function SellProduct() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Fetch Pesticide Products from path: users/{email}/inventory_categories/general_inventory
+  // 2. Fetch Data & Execute Smart 60-Day Automated Database Cleanup
   useEffect(() => {
     if (!currentUserEmail) return;
 
-    const fetchData = async () => {
+    const fetchDataAndCleanup = async () => {
       try {
-        // Fetch document general_inventory
+        // Fetch inventory
         const docRef = doc(db, 'users', currentUserEmail, 'inventory_categories', 'general_inventory');
         const docSnap = await getDoc(docRef);
 
@@ -149,7 +162,6 @@ export default function SellProduct() {
           const data = docSnap.data();
           const productsArray = data.products || [];
 
-          // Map items to internal format expected by the UI
           const formattedProducts = productsArray.map((p: any, index: number) => ({
             id: String(p.id || index),
             name: p.name || 'Unnamed Product',
@@ -164,24 +176,106 @@ export default function SellProduct() {
           setInventory([]);
         }
 
-        // Fetch Saved Sales Bills
+        // Fetch Monthly Summaries first
+        const summariesRef = collection(db, 'users', currentUserEmail, 'monthly_summaries');
+        const summariesSnap = await getDocs(summariesRef);
+        const summariesMap: Record<string, MonthlySummary> = {};
+        summariesSnap.docs.forEach(d => {
+          summariesMap[d.id] = d.data() as MonthlySummary;
+        });
+
+        // Fetch Sales History
         const billsRef = collection(db, 'users', currentUserEmail, 'sales');
         const q = query(billsRef, orderBy('date', 'desc'));
         const billsSnap = await getDocs(q);
-        const fetchedBills = billsSnap.docs.map(d => ({
+        const rawBills = billsSnap.docs.map(d => ({
           id: d.id,
           ...d.data()
         })) as CustomerBill[];
-        setCustomerBills(fetchedBills);
+
+        // --- AUTOMATED DATABASE CLEANUP (60 Days / 2-Month Retention Logic) ---
+        const now = new Date();
+        const sixtyDaysMs = 60 * 24 * 60 * 60 * 1000;
+        
+        const activeBills: CustomerBill[] = [];
+        const monthlyCalculations: Record<string, { totalSales: number; totalCredit: number; totalPaid: number }> = {};
+
+        for (const bill of rawBills) {
+          const billDate = new Date(bill.date);
+          const timeDiff = now.getTime() - billDate.getTime();
+          const monthKey = `${billDate.getFullYear()}-${String(billDate.getMonth() + 1).padStart(2, '0')}`;
+
+          // Always sum into monthly aggregate for total year tracking
+          if (!monthlyCalculations[monthKey]) {
+            monthlyCalculations[monthKey] = { totalSales: 0, totalCredit: 0, totalPaid: 0 };
+          }
+          monthlyCalculations[monthKey].totalSales += bill.grandTotal || 0;
+          monthlyCalculations[monthKey].totalCredit += bill.creditAmount || 0;
+          monthlyCalculations[monthKey].totalPaid += bill.paidAmount || 0;
+
+          // Clean older paid history (> 60 days AND credit == 0)
+          if (timeDiff > sixtyDaysMs && (bill.creditAmount === 0 || !bill.creditAmount)) {
+            // Delete paid customer record from database so DB is never bloated
+            await deleteDoc(doc(db, 'users', currentUserEmail, 'sales', bill.id));
+          } else {
+            // Keep current/previous 60 days records OR any bill with remaining credit
+            activeBills.push(bill);
+          }
+        }
+
+        // Update/Sync Monthly Summaries in Firestore
+        for (const [mKey, data] of Object.entries(monthlyCalculations)) {
+          const summaryDocRef = doc(db, 'users', currentUserEmail, 'monthly_summaries', mKey);
+          const summaryData: MonthlySummary = {
+            monthKey: mKey,
+            totalSales: data.totalSales,
+            totalCredit: data.totalCredit,
+            totalPaid: data.totalPaid,
+            updatedAt: new Date().toISOString()
+          };
+          await setDoc(summaryDocRef, summaryData, { merge: true });
+          summariesMap[mKey] = summaryData;
+        }
+
+        setMonthlySummaries(summariesMap);
+        setCustomerBills(activeBills);
+
       } catch (err) {
-        console.error("Firebase fetch error:", err);
+        console.error("Firebase fetch/cleanup error:", err);
       }
     };
 
-    fetchData();
+    fetchDataAndCleanup();
   }, [currentUserEmail]);
 
-  // 3. IDENTIFY FREQUENT CUSTOMERS WITH 3 OR MORE ORDERS
+  // Total Sales of Current Year (1 Jan - 31 Dec) Calculation
+  const totalYearlySales = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    let total = 0;
+
+    // Sum from monthly summaries
+    Object.keys(monthlySummaries).forEach(mKey => {
+      if (mKey.startsWith(String(currentYear))) {
+        total += monthlySummaries[mKey].totalSales || 0;
+      }
+    });
+
+    // Also include live bills that might not have updated summaries yet
+    customerBills.forEach(bill => {
+      const bYear = new Date(bill.date).getFullYear();
+      if (bYear === currentYear) {
+        const mKey = `${bYear}-${String(new Date(bill.date).getMonth() + 1).padStart(2, '0')}`;
+        // If this month isn't in summaries yet, add bill directly
+        if (!monthlySummaries[mKey]) {
+          total += bill.grandTotal || 0;
+        }
+      }
+    });
+
+    return total;
+  }, [monthlySummaries, customerBills]);
+
+  // Frequent Customers (3+ Orders)
   const frequentCustomers = useMemo(() => {
     const orderCounts: Record<string, number> = {};
     customerBills.forEach(bill => {
@@ -190,12 +284,9 @@ export default function SellProduct() {
         orderCounts[name] = (orderCounts[name] || 0) + 1;
       }
     });
-
-    // Return unique list of customer names who have 3 or more completed orders
     return Object.keys(orderCounts).filter(name => orderCounts[name] >= 3);
   }, [customerBills]);
 
-  // Filter Auto-Suggestions based on current input
   const filteredSuggestions = useMemo(() => {
     if (!customerName.trim()) return [];
     return frequentCustomers.filter(name =>
@@ -203,7 +294,6 @@ export default function SellProduct() {
     );
   }, [frequentCustomers, customerName]);
 
-  // Handle Product Dropdown Change
   const handleProductSelect = (productId: string) => {
     setSelectedProductId(productId);
     const prod = inventory.find(p => p.id === productId);
@@ -220,7 +310,6 @@ export default function SellProduct() {
     setTimeout(() => setShowErrorToast(false), 3500);
   };
 
-  // Add Item to Cart
   const handleAddToCart = () => {
     if (!selectedProductId) return triggerError("Please select a pesticide product!");
     if (!quantity || Number(quantity) <= 0) return triggerError("Please enter a valid quantity!");
@@ -256,13 +345,11 @@ export default function SellProduct() {
       ]);
     }
 
-    // Reset product selection inputs only
     setSelectedProductId('');
     setQuantity(1);
     setUnitPrice('');
   };
 
-  // Update Cart Item Quantity or Price
   const handleUpdateCartItem = (id: string, newQty: number, newPrice: number) => {
     setCartItems(prev => prev.map(item => {
       if (item.id === id) {
@@ -277,12 +364,10 @@ export default function SellProduct() {
     setCartItems(prev => prev.filter(item => item.id !== id));
   };
 
-  // Grand Total Calculation
   const grandTotal = useMemo(() => {
     return cartItems.reduce((acc, curr) => acc + (curr.quantity * curr.price), 0);
   }, [cartItems]);
 
-  // Net Paid and Credit Amounts
   const calculatedPayment = useMemo(() => {
     if (paymentType === 'CASH') {
       return { paid: grandTotal, credit: 0 };
@@ -292,7 +377,6 @@ export default function SellProduct() {
     return { paid, credit };
   }, [paymentType, paidAmountInput, grandTotal]);
 
-  // Save Bill & Update Firestore Document
   const handleSaveBill = async () => {
     if (!customerName.trim()) return triggerError("Please enter Customer Name!");
     if (cartItems.length === 0) return triggerError("Cart is empty! Add products first.");
@@ -301,10 +385,11 @@ export default function SellProduct() {
     setIsSubmitting(true);
 
     try {
+      const now = new Date();
       const billData: CustomerBill = {
         id: `INV-${Date.now()}`,
         customerName: customerName.trim(),
-        date: new Date().toISOString(),
+        date: now.toISOString(),
         items: cartItems.map(i => ({
           name: i.name,
           quantity: i.quantity,
@@ -317,11 +402,27 @@ export default function SellProduct() {
         creditAmount: calculatedPayment.credit
       };
 
-      // 1. Save Bill record
+      // Save Sale Document
       const billRef = doc(db, 'users', currentUserEmail, 'sales', billData.id);
       await setDoc(billRef, billData);
 
-      // 2. Update array inside general_inventory document
+      // Update Monthly Summary Aggregation Document
+      const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const summaryDocRef = doc(db, 'users', currentUserEmail, 'monthly_summaries', monthKey);
+      const currentMonthSummary = monthlySummaries[monthKey] || { totalSales: 0, totalCredit: 0, totalPaid: 0 };
+      
+      const newMonthSummary: MonthlySummary = {
+        monthKey,
+        totalSales: (currentMonthSummary.totalSales || 0) + grandTotal,
+        totalCredit: (currentMonthSummary.totalCredit || 0) + calculatedPayment.credit,
+        totalPaid: (currentMonthSummary.totalPaid || 0) + calculatedPayment.paid,
+        updatedAt: now.toISOString()
+      };
+      await setDoc(summaryDocRef, newMonthSummary, { merge: true });
+      
+      setMonthlySummaries(prev => ({ ...prev, [monthKey]: newMonthSummary }));
+
+      // Deduct Inventory Stock
       const genInvRef = doc(db, 'users', currentUserEmail, 'inventory_categories', 'general_inventory');
       const docSnap = await getDoc(genInvRef);
 
@@ -329,7 +430,6 @@ export default function SellProduct() {
         const currentData = docSnap.data();
         let productsArray = currentData.products || [];
 
-        // Deduct quantities for sold products
         cartItems.forEach(cartItem => {
           productsArray = productsArray.map((p: any) => {
             if (String(p.id) === String(cartItem.id)) {
@@ -345,7 +445,6 @@ export default function SellProduct() {
 
         await updateDoc(genInvRef, { products: productsArray });
 
-        // Refresh local inventory state
         setInventory(prev => prev.map(invItem => {
           const cartMatch = cartItems.find(c => String(c.id) === String(invItem.id));
           if (cartMatch) {
@@ -355,12 +454,10 @@ export default function SellProduct() {
         }));
       }
 
-      // 3. Update Local States
       setCustomerBills(prev => [billData, ...prev]);
       setLatestBill(billData);
       setShowBillModal(true);
 
-      // Reset Form & Cart
       setCustomerName('');
       setShowSuggestions(false);
       setCartItems([]);
@@ -378,38 +475,186 @@ export default function SellProduct() {
     }
   };
 
-  // Filtered Saved Customer Cards
+  // Record Filter Logic
   const filteredCustomerBills = useMemo(() => {
     const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
+    const todayStr = now.toDateString();
 
     return customerBills.filter(bill => {
       const matchesName = bill.customerName.toLowerCase().includes(customerSearchQuery.toLowerCase());
-      
-      let matchesDays = true;
-      if (dayFilter !== '' && Number(dayFilter) >= 0) {
-        const billDate = new Date(bill.date);
-        const diffInDays = Math.floor((now.getTime() - billDate.getTime()) / (1000 * 3600 * 24));
-        matchesDays = diffInDays <= Number(dayFilter);
+      const billDate = new Date(bill.date);
+
+      let matchesDate = true;
+
+      if (dateFilterRange === 'today') {
+        matchesDate = billDate.toDateString() === todayStr;
+      } else if (dateFilterRange === '3days') {
+        const diffDays = (now.getTime() - billDate.getTime()) / (1000 * 3600 * 24);
+        matchesDate = diffDays <= 3;
+      } else if (dateFilterRange === 'week') {
+        const diffDays = (now.getTime() - billDate.getTime()) / (1000 * 3600 * 24);
+        matchesDate = diffDays <= 7;
+      } else if (dateFilterRange === '15days') {
+        const diffDays = (now.getTime() - billDate.getTime()) / (1000 * 3600 * 24);
+        matchesDate = diffDays <= 15;
+      } else if (dateFilterRange === 'month') {
+        matchesDate = billDate.getMonth() === now.getMonth() && billDate.getFullYear() === now.getFullYear();
       }
 
-      let matchesMonth = true;
-      if (thisMonthOnly) {
-        const billDate = new Date(bill.date);
-        matchesMonth = billDate.getMonth() === currentMonth && billDate.getFullYear() === currentYear;
-      }
-
-      return matchesName && matchesDays && matchesMonth;
+      return matchesName && matchesDate;
     });
-  }, [customerBills, customerSearchQuery, dayFilter, thisMonthOnly]);
+  }, [customerBills, customerSearchQuery, dateFilterRange]);
 
-  // Paginated Customers
+  // Strict Pagination of 5 Records per Page
   const totalCustomerPages = Math.ceil(filteredCustomerBills.length / CUSTOMERS_PER_PAGE) || 1;
+  const currentStartRecord = (customerPage - 1) * CUSTOMERS_PER_PAGE;
+  const currentEndRecord = Math.min(currentStartRecord + CUSTOMERS_PER_PAGE, filteredCustomerBills.length);
+
   const paginatedCustomerBills = useMemo(() => {
-    const start = (customerPage - 1) * CUSTOMERS_PER_PAGE;
-    return filteredCustomerBills.slice(start, start + CUSTOMERS_PER_PAGE);
-  }, [filteredCustomerBills, customerPage]);
+    return filteredCustomerBills.slice(currentStartRecord, currentStartRecord + CUSTOMERS_PER_PAGE);
+  }, [filteredCustomerBills, customerPage, currentStartRecord]);
+
+  // Reset page when filter or search changes
+  useEffect(() => {
+    setCustomerPage(1);
+  }, [customerSearchQuery, dateFilterRange]);
+
+  // Invoice Generation & Printing Logic
+  const handleGenerateInvoiceRange = (range: 'today' | '3days' | 'week' | '15days' | 'month') => {
+    const now = new Date();
+    const todayStr = now.toDateString();
+
+    const selectedBills = customerBills.filter(bill => {
+      const billDate = new Date(bill.date);
+      if (range === 'today') return billDate.toDateString() === todayStr;
+      const diffDays = (now.getTime() - billDate.getTime()) / (1000 * 3600 * 24);
+      if (range === '3days') return diffDays <= 3;
+      if (range === 'week') return diffDays <= 7;
+      if (range === '15days') return diffDays <= 15;
+      if (range === 'month') return billDate.getMonth() === now.getMonth() && billDate.getFullYear() === now.getFullYear();
+      return true;
+    });
+
+    if (selectedBills.length === 0) {
+      triggerError("No sales records found for selected period!");
+      return;
+    }
+
+    let totalGrand = 0;
+    let totalPaid = 0;
+    let totalCredit = 0;
+
+    selectedBills.forEach(b => {
+      totalGrand += b.grandTotal;
+      totalPaid += b.paidAmount;
+      totalCredit += b.creditAmount;
+    });
+
+    const printWin = window.open('', '_blank');
+    if (!printWin) return;
+
+    const rangeLabel = {
+      today: 'Today Sales Invoice',
+      '3days': 'Previous 3 Days Sales Invoice',
+      week: 'Full Week Sales Invoice',
+      '15days': '15 Days Sales Invoice',
+      month: '1 Month Sales Invoice'
+    }[range];
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Chaudhary Traders - Sales Invoice Statement</title>
+          <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 30px; color: #1e293b; margin: 0; }
+            .header { text-align: center; border-bottom: 3px solid #f97316; padding-bottom: 20px; margin-bottom: 25px; }
+            .header h1 { margin: 0; font-size: 28px; font-weight: 900; letter-spacing: 2px; color: #0f172a; }
+            .header p { margin: 5px 0 0; color: #ea580c; font-weight: 700; font-size: 14px; }
+            .meta-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 15px 20px; display: flex; justify-content: space-between; margin-bottom: 25px; font-size: 12px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 25px; font-size: 12px; }
+            th { background: #f1f5f9; text-align: left; padding: 10px; font-weight: 800; border-bottom: 2px solid #cbd5e1; }
+            td { padding: 10px; border-bottom: 1px solid #e2e8f0; }
+            .summary { background: #fff7ed; border: 2px solid #fed7aa; border-radius: 16px; padding: 20px; width: 320px; margin-left: auto; font-size: 13px; font-weight: 800; }
+            .summary-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .summary-row.total { font-size: 15px; border-top: 1px dashed #fdba74; padding-top: 8px; color: #ea580c; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>CHAUDHARY TRADERS</h1>
+            <p>Pesticides Stock & Product Sales Statement</p>
+          </div>
+
+          <div class="meta-card">
+            <div>
+              <p><strong>Address:</strong> Chak No 389 Jb Toba Tek Singh Punjab Pakistan</p>
+              <p><strong>Phone:</strong> +92 3261770389</p>
+              <p><strong>Email:</strong> ${currentUserEmail || 'alitahir243715@gmail.com'}</p>
+            </div>
+            <div style="text-align: right;">
+              <p><strong>Report:</strong> ${rangeLabel}</p>
+              <p><strong>Date Generated:</strong> ${new Date().toLocaleDateString()}</p>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Invoice ID</th>
+                <th>Customer Name</th>
+                <th>Date</th>
+                <th>Items Sold</th>
+                <th>Grand Total</th>
+                <th>Paid Amount</th>
+                <th>Credit Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${selectedBills.map(b => `
+                <tr>
+                  <td>${b.id}</td>
+                  <td><strong>${b.customerName}</strong></td>
+                  <td>${new Date(b.date).toLocaleDateString()}</td>
+                  <td>${b.items.map(i => `${i.name} (${i.quantity}x)`).join(', ')}</td>
+                  <td>Rs. ${b.grandTotal}</td>
+                  <td style="color: #10b981;">Rs. ${b.paidAmount}</td>
+                  <td style="color: #ef4444;">Rs. ${b.creditAmount}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <div class="summary">
+            <div class="summary-row">
+              <span>Total Grand Sales:</span>
+              <span>Rs. ${totalGrand}</span>
+            </div>
+            <div class="summary-row" style="color: #10b981;">
+              <span>Total Paid Amount:</span>
+              <span>Rs. ${totalPaid}</span>
+            </div>
+            <div class="summary-row" style="color: #ef4444;">
+              <span>Total Credit Amount:</span>
+              <span>Rs. ${totalCredit}</span>
+            </div>
+            <div class="summary-row total">
+              <span>Net Receivable Credit:</span>
+              <span>Rs. ${totalCredit}</span>
+            </div>
+          </div>
+
+          <script>
+            window.onload = function() { window.print(); }
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWin.document.write(htmlContent);
+    printWin.document.close();
+    setShowInvoiceModal(false);
+  };
 
   const navigationTabs = [
     { id: 'home', label: 'Home', icon: Home, href: '/' },
@@ -437,7 +682,7 @@ export default function SellProduct() {
       {showSuccessToast && (
         <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[110] bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-black text-xs sm:text-sm px-6 py-3.5 rounded-2xl shadow-[0_0_30px_rgba(16,185,129,0.6)] flex items-center gap-3 border border-emerald-300">
           <CheckCircle2 className="h-5 w-5 shrink-0 animate-bounce" />
-          <span>Sale Recorded & Stock Updated Automatically!</span>
+          <span>Sale Recorded & Monthly Summaries Saved!</span>
         </div>
       )}
 
@@ -479,20 +724,38 @@ export default function SellProduct() {
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-8">
         
-        {/* HERO BANNER CARD */}
-        <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-amber-50/80 via-white to-orange-50/40 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-6 md:p-8 border-2 border-orange-500/80 shadow-[0_0_30px_rgba(249,115,22,0.25)]">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/30">
+        {/* SELLING PRODUCTS HERO CARD (MATCHING SCREENSHOT WITH YEARLY SALES OVERVIEW) */}
+        <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-amber-50/80 via-white to-orange-50/40 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-6 md:p-8 border-2 border-orange-500/80 shadow-[0_0_35px_rgba(249,115,22,0.2)]">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+            <div className="space-y-2 max-w-xl">
+              <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/30">
                 <Sparkles className="h-3.5 w-3.5 animate-pulse" />
                 <span className="text-[10px] font-black uppercase tracking-wider">PREMIUM SELLING TERMINAL</span>
               </div>
               <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-slate-900 dark:text-white">
                 Selling Products
               </h1>
-              <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                Automated stock deduction, live cart management, cash & credit billing.
+              <p className="text-xs font-bold text-slate-500 dark:text-slate-400 leading-relaxed">
+                Automated stock deduction, live cart management, cash & credit billing with 60-day auto paid customer cleanup.
               </p>
+            </div>
+
+            {/* TOTAL SALES OF THE YEAR (FROM 1 JAN TO 31 DEC) STAT CARD */}
+            <div className="bg-white/90 dark:bg-[#070b13]/90 backdrop-blur-xl border-2 border-orange-500/40 rounded-[2rem] p-5 flex items-center gap-4 shadow-xl shrink-0 min-w-[280px]">
+              <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 text-white flex items-center justify-center shadow-lg shadow-orange-500/30 shrink-0">
+                <Banknote className="h-7 w-7 stroke-[2.2]" />
+              </div>
+              <div className="space-y-0.5">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                  TOTAL SALES OF THE YEAR
+                </span>
+                <span className="text-[10px] font-bold text-orange-500 block">
+                  (1 JAN TO 31 DEC)
+                </span>
+                <div className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
+                  Rs. {totalYearlySales.toLocaleString()}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -510,7 +773,7 @@ export default function SellProduct() {
               </h2>
 
               <div className="space-y-4">
-                {/* Customer Name with Dynamic Auto-Suggestions */}
+                {/* Customer Name */}
                 <div>
                   <label className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-1.5">
                     Customer Name
@@ -529,7 +792,6 @@ export default function SellProduct() {
                       className="w-full bg-slate-50 dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 rounded-2xl py-3 pl-10 pr-4 text-xs font-extrabold text-slate-800 dark:text-slate-100 outline-none focus:border-orange-500"
                     />
 
-                    {/* Auto-Suggestion Popup for Frequent Customers (3+ Orders) */}
                     {showSuggestions && filteredSuggestions.length > 0 && (
                       <div className="absolute left-0 right-0 top-full mt-1.5 bg-white dark:bg-[#0c1222] border-2 border-orange-500 rounded-2xl shadow-2xl z-50 overflow-hidden">
                         <div className="px-3 py-1.5 bg-orange-500/10 border-b border-orange-500/20 text-[10px] font-black uppercase text-orange-600 dark:text-orange-400 flex items-center justify-between">
@@ -659,7 +921,6 @@ export default function SellProduct() {
                       </div>
 
                       <div className="flex items-center gap-3">
-                        {/* Quantity Counter */}
                         <div className="flex items-center bg-white dark:bg-[#0c1222] rounded-xl border border-slate-200 dark:border-slate-800 p-1">
                           <button
                             onClick={() => handleUpdateCartItem(item.id, item.quantity - 1, item.price)}
@@ -676,7 +937,6 @@ export default function SellProduct() {
                           </button>
                         </div>
 
-                        {/* Price Input */}
                         <input
                           type="number"
                           value={item.price}
@@ -684,7 +944,6 @@ export default function SellProduct() {
                           className="w-20 bg-white dark:bg-[#0c1222] border border-slate-200 dark:border-slate-800 rounded-xl py-1 px-2 text-xs font-extrabold outline-none focus:border-orange-500"
                         />
 
-                        {/* Delete Button */}
                         <button
                           onClick={() => handleRemoveCartItem(item.id)}
                           className="p-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-all"
@@ -731,11 +990,10 @@ export default function SellProduct() {
                 </button>
               </div>
 
-              {/* Partial Credit Input */}
               {paymentType === 'CREDIT' && (
                 <div className="space-y-2 bg-amber-500/10 p-4 rounded-2xl border border-amber-500/30">
                   <label className="text-xs font-black text-amber-700 dark:text-amber-300 block">
-                    Paid Amount (e.g. Total 3000, Customer gives 1000, Credit is 2000)
+                    Paid Amount (Remaining will be logged as Credit)
                   </label>
                   <input
                     type="number"
@@ -751,7 +1009,6 @@ export default function SellProduct() {
                 </div>
               )}
 
-              {/* Bill Summary Breakdown */}
               <div className="bg-slate-50 dark:bg-[#070b13] p-4 rounded-2xl space-y-2 text-xs font-extrabold">
                 <div className="flex justify-between text-slate-500">
                   <span>Grand Total:</span>
@@ -767,7 +1024,6 @@ export default function SellProduct() {
                 </div>
               </div>
 
-              {/* SAVE BILL BUTTON */}
               <button
                 onClick={handleSaveBill}
                 disabled={isSubmitting || cartItems.length === 0}
@@ -783,11 +1039,22 @@ export default function SellProduct() {
           {/* RIGHT SAVED CUSTOMERS & BILLS HISTORY */}
           <div className="lg:col-span-5 space-y-6">
             <div className="bg-white dark:bg-[#0c1222] p-6 rounded-[2rem] border border-slate-200/80 dark:border-slate-800/60 shadow-sm space-y-5">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-black text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                  <Receipt className="h-5 w-5 text-orange-500" />
+              
+              {/* HEADER WITH GENERATE INVOICE BUTTON (EXACT MATCH TO DESIGN) */}
+              <div className="space-y-3">
+                <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <Receipt className="h-6 w-6 text-orange-500" />
                   <span>Customer Records</span>
                 </h2>
+
+                <button
+                  type="button"
+                  onClick={() => setShowInvoiceModal(true)}
+                  className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-md flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-95"
+                >
+                  <FileText className="h-4 w-4" />
+                  <span>Generate Invoice</span>
+                </button>
               </div>
 
               {/* Filters for Customers */}
@@ -803,65 +1070,60 @@ export default function SellProduct() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  {/* Previous Days Filter Input */}
-                  <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-[#070b13] p-2.5 rounded-2xl border border-slate-200 dark:border-slate-800">
-                    <CalendarDays className="h-4 w-4 text-orange-500 shrink-0" />
-                    <input
-                      type="number"
-                      min="0"
-                      placeholder="Last Days (e.g. 1)"
-                      value={dayFilter}
-                      onChange={(e) => setDayFilter(e.target.value === '' ? '' : Number(e.target.value))}
-                      className="w-full bg-transparent text-xs font-black outline-none"
-                    />
-                  </div>
-
-                  {/* This Month Toggle Filter Button */}
-                  <button
-                    type="button"
-                    onClick={() => setThisMonthOnly(!thisMonthOnly)}
-                    className={`p-2.5 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 transition-all border ${
-                      thisMonthOnly
-                        ? 'bg-orange-500 text-white border-orange-500 shadow-md'
-                        : 'bg-slate-50 dark:bg-[#070b13] border-slate-200 dark:border-slate-800 text-slate-500'
-                    }`}
-                  >
-                    <CalendarIcon className="h-3.5 w-3.5" />
-                    <span>This Month</span>
-                  </button>
+                {/* Quick Date Range Selectors */}
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { id: 'today', label: 'Today Only' },
+                    { id: '3days', label: '3 Days' },
+                    { id: 'week', label: '1 Week' },
+                    { id: '15days', label: '15 Days' },
+                    { id: 'month', label: 'This Month' },
+                  ].map((btn) => (
+                    <button
+                      key={btn.id}
+                      type="button"
+                      onClick={() => setDateFilterRange(btn.id as any)}
+                      className={`px-3.5 py-1.5 rounded-full text-[11px] font-extrabold transition-all border ${
+                        dateFilterRange === btn.id
+                          ? 'bg-orange-500 text-white border-orange-500 shadow-md'
+                          : 'bg-slate-50 dark:bg-[#070b13] border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-orange-400'
+                      }`}
+                    >
+                      {btn.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
               {/* Customer Cards List */}
               <div className="space-y-3">
                 {paginatedCustomerBills.length === 0 ? (
-                  <div className="text-center py-10 bg-slate-50 dark:bg-[#070b13] rounded-2xl">
-                    <p className="text-xs font-bold text-slate-400">No customer records found.</p>
+                  <div className="text-center py-10 bg-slate-50 dark:bg-[#070b13] rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
+                    <p className="text-xs font-bold text-slate-400">No customer records found for selected filter.</p>
                   </div>
                 ) : (
                   paginatedCustomerBills.map((bill) => (
                     <div
                       key={bill.id}
-                      className="bg-slate-50 dark:bg-[#070b13] p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800/60 space-y-2 shadow-sm hover:border-orange-500/50 transition-all"
+                      className="bg-slate-50/70 dark:bg-[#070b13]/70 p-4 rounded-3xl border border-slate-200/80 dark:border-slate-800/60 space-y-2 shadow-sm hover:border-orange-500/50 transition-all"
                     >
                       <div className="flex justify-between items-start">
                         <div>
-                          <h4 className="text-xs font-black text-slate-800 dark:text-slate-100">{bill.customerName}</h4>
+                          <h4 className="text-sm font-black text-slate-900 dark:text-white">{bill.customerName}</h4>
                           <span className="text-[10px] font-bold text-slate-400">
                             {new Date(bill.date).toLocaleDateString()}
                           </span>
                         </div>
-                        <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-md ${
+                        <span className={`text-[10px] font-black px-3 py-1 rounded-full ${
                           bill.creditAmount > 0 
-                            ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20' 
-                            : 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
+                            ? 'bg-rose-500/10 text-rose-500 border border-rose-500/30' 
+                            : 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
                         }`}>
                           {bill.creditAmount > 0 ? `Credit: Rs. ${bill.creditAmount}` : 'Paid Net Cash'}
                         </span>
                       </div>
 
-                      <div className="text-[11px] font-bold text-slate-500 space-y-1">
+                      <div className="text-xs font-bold text-slate-600 dark:text-slate-300 space-y-1">
                         {bill.items.map((it, idx) => (
                           <div key={idx} className="flex justify-between">
                             <span>{it.name} ({it.quantity}x)</span>
@@ -870,14 +1132,14 @@ export default function SellProduct() {
                         ))}
                       </div>
 
-                      <div className="border-t border-slate-200 dark:border-slate-800 pt-2 flex justify-between items-center text-xs font-black">
-                        <span>Total: Rs. {bill.grandTotal}</span>
+                      <div className="border-t border-slate-200 dark:border-slate-800 pt-2.5 flex justify-between items-center text-xs font-black">
+                        <span className="text-slate-900 dark:text-white">Total: Rs. {bill.grandTotal}</span>
                         <button
                           onClick={() => {
                             setLatestBill(bill);
                             setShowBillModal(true);
                           }}
-                          className="text-[10px] text-orange-500 hover:underline"
+                          className="text-xs font-extrabold text-orange-500 hover:underline"
                         >
                           View Receipt
                         </button>
@@ -887,35 +1149,107 @@ export default function SellProduct() {
                 )}
               </div>
 
-              {/* 10-Item Pagination */}
-              {totalCustomerPages > 1 && (
-                <div className="flex items-center justify-between pt-2">
-                  <button
-                    onClick={() => setCustomerPage(p => Math.max(p - 1, 1))}
-                    disabled={customerPage === 1}
-                    className="p-2 rounded-xl bg-slate-100 dark:bg-[#070b13] disabled:opacity-40"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                  <span className="text-xs font-black text-slate-400">
-                    Page {customerPage} of {totalCustomerPages}
-                  </span>
-                  <button
-                    onClick={() => setCustomerPage(p => Math.min(p + 1, totalCustomerPages))}
-                    disabled={customerPage === totalCustomerPages}
-                    className="p-2 rounded-xl bg-slate-100 dark:bg-[#070b13] disabled:opacity-40"
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
+              {/* BEAUTIFUL PAGINATION UI WITH 5 ITEMS PER PAGE (MATCHING SCREENSHOT EXACTLY) */}
+              {filteredCustomerBills.length > 0 && (
+                <div className="bg-white dark:bg-[#0c1222] rounded-3xl p-4 border border-slate-200/80 dark:border-slate-800/80 flex flex-col items-center gap-3 shadow-sm mt-4">
+                  {/* Showing Text Indicator */}
+                  <p className="text-xs font-black text-slate-500 dark:text-slate-400">
+                    Showing <span className="text-orange-500 font-extrabold">{filteredCustomerBills.length > 0 ? currentStartRecord + 1 : 0}</span> to <span className="text-orange-500 font-extrabold">{currentEndRecord}</span> of <span className="text-slate-900 dark:text-white font-extrabold">{filteredCustomerBills.length}</span> records
+                  </p>
+
+                  {/* Number Buttons Row */}
+                  <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                    <button
+                      onClick={() => setCustomerPage(p => Math.max(p - 1, 1))}
+                      disabled={customerPage === 1}
+                      className="px-3 py-1.5 rounded-full bg-slate-100 dark:bg-[#070b13] text-slate-600 dark:text-slate-300 font-bold text-xs hover:bg-orange-500 hover:text-white disabled:opacity-40 transition-all flex items-center gap-1"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" /> Previous
+                    </button>
+
+                    {Array.from({ length: totalCustomerPages }, (_, i) => i + 1).map((pageNum) => (
+                      <button
+                        key={pageNum}
+                        onClick={() => setCustomerPage(pageNum)}
+                        className={`h-8 w-8 rounded-full font-black text-xs transition-all ${
+                          customerPage === pageNum
+                            ? 'bg-orange-500 text-white shadow-md shadow-orange-500/30 scale-105'
+                            : 'bg-slate-100 dark:bg-[#070b13] text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    ))}
+
+                    <button
+                      onClick={() => setCustomerPage(p => Math.min(p + 1, totalCustomerPages))}
+                      disabled={customerPage === totalCustomerPages}
+                      className="px-3 py-1.5 rounded-full bg-slate-100 dark:bg-[#070b13] text-slate-600 dark:text-slate-300 font-bold text-xs hover:bg-orange-500 hover:text-white disabled:opacity-40 transition-all flex items-center gap-1"
+                    >
+                      Next <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
               )}
+
             </div>
           </div>
 
         </div>
       </main>
 
-      {/* GENERATED SALE BILL CARD MODAL */}
+      {/* INVOICE RANGE SELECTOR MODAL */}
+      {showInvoiceModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
+          <div className="bg-white dark:bg-[#0c1222] border-2 border-orange-500/50 rounded-[2.5rem] p-6 max-w-sm w-full shadow-[0_0_50px_rgba(249,115,22,0.3)] space-y-5">
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                <Printer className="h-5 w-5 text-orange-500" />
+                <span>Generate Invoice</span>
+              </h3>
+              <button onClick={() => setShowInvoiceModal(false)} className="p-1 hover:text-orange-500">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="text-xs font-bold text-slate-500">
+              Select time period to generate printable official stock invoice statement:
+            </p>
+
+            <div className="space-y-2">
+              {[
+                { id: 'today', title: 'Today' },
+                { id: '3days', title: 'Previous Three Days' },
+                { id: 'week', title: 'Full Week' },
+                { id: '15days', title: '15 Days' },
+                { id: 'month', title: '1 Month' },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => setInvoiceRange(opt.id as any)}
+                  className={`w-full text-left px-4 py-3 rounded-2xl text-xs font-black border-2 transition-all flex items-center justify-between ${
+                    invoiceRange === opt.id
+                      ? 'bg-orange-500/10 text-orange-600 border-orange-500'
+                      : 'bg-slate-50 dark:bg-[#070b13] border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <span>{opt.title}</span>
+                  {invoiceRange === opt.id && <Check className="h-4 w-4 text-orange-500" />}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => handleGenerateInvoiceRange(invoiceRange)}
+              className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg hover:scale-[1.01] transition-all flex items-center justify-center gap-2"
+            >
+              <Printer className="h-4 w-4" /> Generate & Print Invoice
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* SINGLE BILL RECEIPT MODAL */}
       {showBillModal && latestBill && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
           <div className="bg-white dark:bg-[#0c1222] border-2 border-orange-500/50 rounded-[2.5rem] p-6 max-w-md w-full shadow-[0_0_50px_rgba(249,115,22,0.3)] space-y-5">

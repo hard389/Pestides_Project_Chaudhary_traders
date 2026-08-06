@@ -28,7 +28,9 @@ import {
   Flame,
   Edit3,
   AlertCircle,
-  Box
+  Box,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 // Firebase Configuration
@@ -45,6 +47,13 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const auth = getAuth(app);
+
+// Helper function to safely convert any value to a valid finite number (fixes all NaN issues)
+const safeNum = (val: any): number => {
+  if (val === null || val === undefined || val === '') return 0;
+  const num = Number(val);
+  return isNaN(num) ? 0 : num;
+};
 
 interface Product {
   id: string | number;
@@ -79,6 +88,10 @@ export default function StockOverview() {
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out' | 'in'>('all');
   const [sortBy, setSortBy] = useState<'name' | 'qty-asc' | 'qty-desc' | 'sold-desc'>('sold-desc');
 
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
+
   // UI Toast State
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
@@ -103,27 +116,27 @@ export default function StockOverview() {
     return () => unsubscribe();
   }, []);
 
-  // Fetch Stock and Sales Data from Firebase Firestore
+  // Fetch Stock and Sales Data sequentially from Firebase Firestore
   const fetchStockAndSalesData = async () => {
     if (!currentUserEmail) return;
     setLoading(true);
     try {
-      // Step A: Fetch Products from Inventory Categories
+      // Step A: Fetch Products from Inventory Categories sequentially
       const inventoryRef = collection(db, 'users', currentUserEmail, 'inventory_categories');
       const invSnap = await getDocs(inventoryRef);
 
       const fetchedProducts: Product[] = [];
 
-      invSnap.forEach((categoryDoc) => {
+      invSnap.docs.forEach((categoryDoc) => {
         const data = categoryDoc.data();
         if (data && Array.isArray(data.products)) {
           data.products.forEach((prod: any) => {
             fetchedProducts.push({
               id: prod.id || Math.random().toString(),
               name: prod.name || 'Unnamed Product',
-              quantity: Number(prod.quantity || 0),
-              costPrice: Number(prod.costPrice || 0),
-              salePrice: Number(prod.salePrice || 0),
+              quantity: safeNum(prod.quantity),
+              costPrice: safeNum(prod.costPrice),
+              salePrice: safeNum(prod.salePrice),
               avatar: prod.avatar || '',
               categoryDocId: categoryDoc.id,
               rawProductData: prod
@@ -132,19 +145,19 @@ export default function StockOverview() {
         }
       });
 
-      // Step B: Fetch Sales Documents to compute Most Selling Products
+      // Step B: Fetch Sales Documents sequentially to compute Most Selling Products
       const salesRef = collection(db, 'users', currentUserEmail, 'sales');
       const salesSnap = await getDocs(salesRef);
 
       const soldCounts: { [productName: string]: number } = {};
 
-      salesSnap.forEach((saleDoc) => {
+      salesSnap.docs.forEach((saleDoc) => {
         const sData = saleDoc.data();
         if (sData && Array.isArray(sData.items)) {
           sData.items.forEach((item: SaleDocItem) => {
             const nameKey = item.name ? item.name.trim().toLowerCase() : '';
             if (nameKey) {
-              soldCounts[nameKey] = (soldCounts[nameKey] || 0) + Number(item.quantity || 0);
+              soldCounts[nameKey] = (soldCounts[nameKey] || 0) + safeNum(item.quantity);
             }
           });
         }
@@ -155,7 +168,7 @@ export default function StockOverview() {
     } catch (err) {
       console.error("Error fetching inventory data:", err);
       triggerError("Failed to fetch stock overview data!");
-    } finally {
+    } fontally: {
       setLoading(false);
     }
   };
@@ -163,6 +176,11 @@ export default function StockOverview() {
   useEffect(() => {
     fetchStockAndSalesData();
   }, [currentUserEmail]);
+
+  // Reset pagination to page 1 whenever search, filter, or sort options change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, stockFilter, sortBy]);
 
   const triggerError = (msg: string) => {
     setErrorMessage(msg);
@@ -194,10 +212,13 @@ export default function StockOverview() {
     let outOfStockCount = 0;
 
     products.forEach((p) => {
-      totalStockQty += p.quantity;
-      totalValuation += p.quantity * p.salePrice;
-      if (p.quantity === 0) outOfStockCount++;
-      else if (p.quantity < 10) lowStockCount++;
+      const qty = safeNum(p.quantity);
+      const price = safeNum(p.salePrice);
+      totalStockQty += qty;
+      totalValuation += qty * price;
+
+      if (qty === 0) outOfStockCount++;
+      else if (qty < 10) lowStockCount++;
     });
 
     return {
@@ -215,24 +236,33 @@ export default function StockOverview() {
         const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
         
         let matchesStock = true;
-        if (stockFilter === 'low') matchesStock = p.quantity > 0 && p.quantity < 10;
-        else if (stockFilter === 'out') matchesStock = p.quantity === 0;
-        else if (stockFilter === 'in') matchesStock = p.quantity >= 10;
+        const qty = safeNum(p.quantity);
+        if (stockFilter === 'low') matchesStock = qty > 0 && qty < 10;
+        else if (stockFilter === 'out') matchesStock = qty === 0;
+        else if (stockFilter === 'in') matchesStock = qty >= 10;
 
         return matchesSearch && matchesStock;
       })
       .sort((a, b) => {
         if (sortBy === 'name') return a.name.localeCompare(b.name);
-        if (sortBy === 'qty-asc') return a.quantity - b.quantity;
-        if (sortBy === 'qty-desc') return b.quantity - a.quantity;
+        if (sortBy === 'qty-asc') return safeNum(a.quantity) - safeNum(b.quantity);
+        if (sortBy === 'qty-desc') return safeNum(b.quantity) - safeNum(a.quantity);
         if (sortBy === 'sold-desc') return getUnitsSold(b.name) - getUnitsSold(a.name);
         return 0;
       });
   }, [products, searchQuery, stockFilter, sortBy, salesMap]);
 
+  // Paginated products calculations
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage) || 1;
+  const currentPaginatedProducts = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredProducts.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredProducts, currentPage, itemsPerPage]);
+
   const handleUpdateStockQuantity = async () => {
     if (!selectedProduct || newQuantityInput === '') return;
-    if (Number(newQuantityInput) < 0) {
+    const validatedQty = safeNum(newQuantityInput);
+    if (validatedQty < 0) {
       return triggerError("Stock quantity cannot be negative!");
     }
 
@@ -250,7 +280,7 @@ export default function StockOverview() {
           if (Array.isArray(cData.products)) {
             updatedProductsArray = cData.products.map((p: any) => {
               if (String(p.id) === String(selectedProduct.id)) {
-                return { ...p, quantity: String(newQuantityInput) };
+                return { ...p, quantity: validatedQty };
               }
               return p;
             });
@@ -366,7 +396,7 @@ export default function StockOverview() {
               <div>
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total Stock Value</span>
                 <p className="text-2xl font-black text-slate-900 dark:text-white">
-                  Rs. {stats.totalValuation.toLocaleString()}
+                  Rs. {safeNum(stats.totalValuation).toLocaleString()}
                 </p>
               </div>
             </div>
@@ -391,7 +421,7 @@ export default function StockOverview() {
             </div>
             <div>
               <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Total Units</span>
-              <p className="text-xl font-black text-slate-900 dark:text-white">{stats.totalStockQty}</p>
+              <p className="text-xl font-black text-slate-900 dark:text-white">{safeNum(stats.totalStockQty)}</p>
             </div>
           </div>
 
@@ -416,7 +446,7 @@ export default function StockOverview() {
           </div>
         </div>
 
-        {/* MOST SELLING PRODUCTS SECTION */}
+        {/* MOST SELLING PRODUCTS SECTION (4 ANIMATED & GLOWING CARDS) */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -435,33 +465,37 @@ export default function StockOverview() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {mostSellingProducts.map((p, index) => {
-                const soldQty = getUnitsSold(p.name);
+                const soldQty = safeNum(getUnitsSold(p.name));
+                const actualSalePrice = safeNum(p.salePrice);
                 return (
                   <div
                     key={p.id}
-                    className="relative overflow-hidden bg-white dark:bg-[#0c1222] p-5 rounded-[2rem] border-2 border-orange-500/40 shadow-[0_0_20px_rgba(249,115,22,0.15)] hover:shadow-[0_0_30px_rgba(249,115,22,0.3)] transition-all flex flex-col justify-between space-y-4"
+                    className="relative overflow-hidden bg-white dark:bg-[#0c1222] p-5 rounded-[2.2rem] border-2 border-orange-500/80 shadow-[0_0_25px_rgba(249,115,22,0.35)] hover:shadow-[0_0_40px_rgba(249,115,22,0.6)] hover:scale-[1.02] transition-all duration-300 flex flex-col justify-between space-y-4 group"
                   >
-                    <div className="absolute top-3 right-3 h-7 w-7 rounded-full bg-gradient-to-br from-orange-500 to-amber-500 text-white font-black text-xs flex items-center justify-center shadow-md">
+                    {/* GLOWING ANIMATED BACKDROP PULSE */}
+                    <div className="absolute -inset-1 bg-gradient-to-r from-orange-500/20 via-amber-500/20 to-orange-500/20 rounded-[2.2rem] blur-md opacity-75 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 animate-pulse -z-10"></div>
+
+                    <div className="absolute top-3 right-3 h-8 w-8 rounded-full bg-gradient-to-br from-orange-500 via-amber-500 to-yellow-500 text-white font-black text-xs flex items-center justify-center shadow-[0_0_12px_rgba(249,115,22,0.8)] border border-white/40">
                       #{index + 1}
                     </div>
 
                     <div className="flex items-center gap-3">
                       {p.avatar ? (
-                        <img src={p.avatar} alt={p.name} className="h-12 w-12 rounded-2xl object-cover border border-orange-500/30" />
+                        <img src={p.avatar} alt={p.name} className="h-12 w-12 rounded-2xl object-cover border-2 border-orange-500/40 shadow-sm" />
                       ) : (
-                        <div className="h-12 w-12 rounded-2xl bg-orange-500/10 text-orange-500 font-black flex items-center justify-center text-lg">
+                        <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-orange-500/20 to-amber-500/20 text-orange-500 font-black flex items-center justify-center text-lg border border-orange-500/40 shadow-inner">
                           {p.name.charAt(0)}
                         </div>
                       )}
                       <div>
                         <h3 className="font-black text-sm text-slate-900 dark:text-white line-clamp-1">{p.name}</h3>
-                        <span className="text-[11px] font-bold text-slate-400">Rs. {p.salePrice} / unit</span>
+                        <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Rs. {actualSalePrice} / unit</span>
                       </div>
                     </div>
 
-                    <div className="bg-slate-50 dark:bg-[#070b13] p-3 rounded-2xl border border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between text-xs font-black">
+                    <div className="bg-orange-500/5 dark:bg-[#070b13]/80 p-3 rounded-2xl border border-orange-500/20 flex items-center justify-between text-xs font-black">
                       <span className="text-slate-500 dark:text-slate-400">Total Units Sold:</span>
-                      <span className="text-orange-500 font-black text-sm">{soldQty} Units</span>
+                      <span className="text-orange-500 font-black text-sm drop-shadow-[0_0_8px_rgba(249,115,22,0.4)]">{soldQty} Units</span>
                     </div>
                   </div>
                 );
@@ -518,7 +552,7 @@ export default function StockOverview() {
           </div>
         </div>
 
-        {/* ALL PRODUCTS LIST GRID */}
+        {/* ALL PRODUCTS LIST GRID (PAGINATED AT 5 ITEMS PER PAGE) */}
         {loading ? (
           <div className="text-center py-20 bg-white dark:bg-[#0c1222] rounded-[2.5rem] border border-slate-200 dark:border-slate-800">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-orange-500 border-t-transparent"></div>
@@ -533,81 +567,128 @@ export default function StockOverview() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredProducts.map((p) => {
-              const soldUnits = getUnitsSold(p.name);
-              const isLow = p.quantity > 0 && p.quantity < 10;
-              const isOut = p.quantity === 0;
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {currentPaginatedProducts.map((p) => {
+                const soldUnits = safeNum(getUnitsSold(p.name));
+                const currentQty = safeNum(p.quantity);
+                const actualCostPrice = safeNum(p.costPrice);
+                const actualSalePrice = safeNum(p.salePrice);
 
-              return (
-                <div
-                  key={p.id}
-                  className="bg-white dark:bg-[#0c1222] p-6 rounded-[2.5rem] border border-slate-200/80 dark:border-slate-800/60 shadow-sm hover:border-orange-500/40 transition-all flex flex-col justify-between space-y-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      {p.avatar ? (
-                        <img src={p.avatar} alt={p.name} className="h-12 w-12 rounded-2xl object-cover border border-slate-200 dark:border-slate-800" />
-                      ) : (
-                        <div className="h-12 w-12 rounded-2xl bg-orange-500/10 text-orange-500 font-black flex items-center justify-center text-lg border border-orange-500/30">
-                          {p.name.charAt(0)}
+                const isLow = currentQty > 0 && currentQty < 10;
+                const isOut = currentQty === 0;
+
+                return (
+                  <div
+                    key={p.id}
+                    className="bg-white dark:bg-[#0c1222] p-6 rounded-[2.5rem] border border-slate-200/80 dark:border-slate-800/60 shadow-sm hover:border-orange-500/40 transition-all flex flex-col justify-between space-y-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        {p.avatar ? (
+                          <img src={p.avatar} alt={p.name} className="h-12 w-12 rounded-2xl object-cover border border-slate-200 dark:border-slate-800" />
+                        ) : (
+                          <div className="h-12 w-12 rounded-2xl bg-orange-500/10 text-orange-500 font-black flex items-center justify-center text-lg border border-orange-500/30">
+                            {p.name.charAt(0)}
+                          </div>
+                        )}
+                        <div>
+                          <h3 className="text-base font-black text-slate-900 dark:text-white line-clamp-1">{p.name}</h3>
+                          <span className="text-[11px] font-bold text-slate-400">ID: {p.id}</span>
                         </div>
-                      )}
-                      <div>
-                        <h3 className="text-base font-black text-slate-900 dark:text-white line-clamp-1">{p.name}</h3>
-                        <span className="text-[11px] font-bold text-slate-400">ID: {p.id}</span>
                       </div>
-                    </div>
 
-                    <span className={`text-[10px] font-black px-3 py-1 rounded-full border ${
-                      isOut
-                        ? 'bg-rose-500/10 text-rose-500 border-rose-500/30'
-                        : isLow
-                        ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
-                        : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'
-                    }`}>
-                      {isOut ? 'Out of Stock' : isLow ? 'Low Stock' : 'In Stock'}
-                    </span>
-                  </div>
-
-                  <div className="bg-slate-50 dark:bg-[#070b13] p-4 rounded-2xl border border-slate-200/60 dark:border-slate-800/60 space-y-2">
-                    <div className="flex justify-between items-center text-xs font-bold text-slate-600 dark:text-slate-300">
-                      <span>Sale Price:</span>
-                      <span className="font-black text-orange-500">Rs. {p.salePrice}</span>
-                    </div>
-
-                    <div className="flex justify-between items-center text-xs font-bold text-slate-600 dark:text-slate-300">
-                      <span>Cost Price:</span>
-                      <span>Rs. {p.costPrice}</span>
-                    </div>
-
-                    <div className="flex justify-between items-center text-xs font-bold text-slate-600 dark:text-slate-300 pt-1 border-t border-slate-200/60 dark:border-slate-800/60">
-                      <span>Units Sold:</span>
-                      <span className="text-slate-900 dark:text-white font-black">{soldUnits} units</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-1">
-                    <div>
-                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Current Stock</span>
-                      <span className={`text-2xl font-black ${isOut ? 'text-rose-500' : isLow ? 'text-amber-500' : 'text-slate-900 dark:text-white'}`}>
-                        {p.quantity} <span className="text-xs font-bold text-slate-400">units</span>
+                      <span className={`text-[10px] font-black px-3 py-1 rounded-full border ${
+                        isOut
+                          ? 'bg-rose-500/10 text-rose-500 border-rose-500/30'
+                          : isLow
+                          ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
+                          : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'
+                      }`}>
+                        {isOut ? 'Out of Stock' : isLow ? 'Low Stock' : 'In Stock'}
                       </span>
                     </div>
 
-                    <button
-                      onClick={() => {
-                        setSelectedProduct(p);
-                        setNewQuantityInput(p.quantity);
-                      }}
-                      className="px-4 py-2.5 rounded-2xl bg-orange-500/10 text-orange-500 hover:bg-orange-500 hover:text-white font-black text-xs transition-all flex items-center gap-1.5 border border-orange-500/30"
-                    >
-                      <Edit3 className="h-3.5 w-3.5" /> Adjust Stock
-                    </button>
+                    <div className="bg-slate-50 dark:bg-[#070b13] p-4 rounded-2xl border border-slate-200/60 dark:border-slate-800/60 space-y-2">
+                      <div className="flex justify-between items-center text-xs font-bold text-slate-600 dark:text-slate-300">
+                        <span>Sale Price:</span>
+                        <span className="font-black text-orange-500">Rs. {actualSalePrice}</span>
+                      </div>
+
+                      <div className="flex justify-between items-center text-xs font-bold text-slate-600 dark:text-slate-300">
+                        <span>Cost Price:</span>
+                        <span>Rs. {actualCostPrice}</span>
+                      </div>
+
+                      <div className="flex justify-between items-center text-xs font-bold text-slate-600 dark:text-slate-300 pt-1 border-t border-slate-200/60 dark:border-slate-800/60">
+                        <span>Units Sold:</span>
+                        <span className="text-slate-900 dark:text-white font-black">{soldUnits} units</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Current Stock</span>
+                        <span className={`text-2xl font-black ${isOut ? 'text-rose-500' : isLow ? 'text-amber-500' : 'text-slate-900 dark:text-white'}`}>
+                          {currentQty} <span className="text-xs font-bold text-slate-400">units</span>
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          setSelectedProduct(p);
+                          setNewQuantityInput(currentQty);
+                        }}
+                        className="px-4 py-2.5 rounded-2xl bg-orange-500/10 text-orange-500 hover:bg-orange-500 hover:text-white font-black text-xs transition-all flex items-center gap-1.5 border border-orange-500/30"
+                      >
+                        <Edit3 className="h-3.5 w-3.5" /> Adjust Stock
+                      </button>
+                    </div>
                   </div>
+                );
+              })}
+            </div>
+
+            {/* ANIMATED BEAUTIFUL PAGINATION CONTROLS (5 ITEMS PER PAGE) */}
+            <div className="bg-white dark:bg-[#0c1222] p-4 rounded-[2rem] border border-slate-200/80 dark:border-slate-800/60 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+              <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                Showing <strong className="text-orange-500">{Math.min((currentPage - 1) * itemsPerPage + 1, filteredProducts.length)}</strong> to <strong className="text-orange-500">{Math.min(currentPage * itemsPerPage, filteredProducts.length)}</strong> of <strong className="text-slate-900 dark:text-white">{filteredProducts.length}</strong> products
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 text-xs font-black text-slate-600 dark:text-slate-300 hover:bg-orange-500 hover:text-white hover:border-orange-500 disabled:opacity-40 disabled:hover:bg-slate-100 disabled:hover:text-slate-600 transition-all flex items-center gap-1"
+                >
+                  <ChevronLeft className="h-4 w-4" /> Previous
+                </button>
+
+                <div className="flex items-center gap-1.5">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`h-8 w-8 rounded-xl text-xs font-black transition-all ${
+                        currentPage === pageNum
+                          ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.5)] scale-110'
+                          : 'bg-slate-100 dark:bg-[#070b13] text-slate-600 dark:text-slate-400 hover:text-orange-500 border border-slate-200 dark:border-slate-800'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  ))}
                 </div>
-              );
-            })}
+
+                <button
+                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 text-xs font-black text-slate-600 dark:text-slate-300 hover:bg-orange-500 hover:text-white hover:border-orange-500 disabled:opacity-40 disabled:hover:bg-slate-100 disabled:hover:text-slate-600 transition-all flex items-center gap-1"
+                >
+                  Next <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </main>

@@ -29,7 +29,10 @@ import {
   LogOut,
   Package,
   Users,
-  BellRing
+  BellRing,
+  Calendar,
+  Info,
+  RotateCcw
 } from 'lucide-react';
 
 // Firebase Configuration
@@ -47,6 +50,14 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const auth = getAuth(app);
 
+// Helper function to format Date as YYYY-MM-DD in local time
+const getLocalDateString = (d: Date) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export default function Dashboard() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -57,6 +68,16 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [salesData, setSalesData] = useState<any[]>([]);
   const [inventoryCostMap, setInventoryCostMap] = useState<{ [key: string]: number }>({});
+
+  // Date Filter State (Restricted to 1 Month Back from Today)
+  const todayStr = useMemo(() => getLocalDateString(new Date()), []);
+  const minDateStr = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return getLocalDateString(d);
+  }, []);
+
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
 
   // Notification States
   const [notificationCount, setNotificationCount] = useState(0);
@@ -70,9 +91,13 @@ export default function Dashboard() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
 
-  // Toast State
+  // Toast & Notification States
   const [showErrorToast, setShowErrorToast] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  
+  // Beautiful "Data Not Found" Notification Toast
+  const [showNotFoundToast, setShowNotFoundToast] = useState(false);
+  const [notFoundMessage, setNotFoundMessage] = useState('');
 
   // Authentication Listener
   useEffect(() => {
@@ -171,6 +196,44 @@ export default function Dashboard() {
     setTimeout(() => setShowErrorToast(false), 3500);
   };
 
+  // Helper to extract Date object from sale record
+  const getSaleDateObj = (sale: any): Date => {
+    if (sale.date) return new Date(sale.date);
+    if (sale.createdAt?.seconds) return new Date(sale.createdAt.seconds * 1000);
+    if (sale.timestamp) return new Date(sale.timestamp);
+    return new Date();
+  };
+
+  // Handle Date Selector Change with Validation & Toast Notification
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newDateStr = e.target.value;
+    if (!newDateStr) return;
+
+    setSelectedDate(newDateStr);
+    setCurrentPage(1);
+
+    // Check if sales data exists for selected date
+    const hasData = salesData.some((sale) => {
+      const sDate = getSaleDateObj(sale);
+      return getLocalDateString(sDate) === newDateStr;
+    });
+
+    if (!hasData) {
+      setNotFoundMessage(`No sales record found in database for ${newDateStr}!`);
+      setShowNotFoundToast(true);
+      setTimeout(() => setShowNotFoundToast(false), 4000);
+    } else {
+      setShowNotFoundToast(false);
+    }
+  };
+
+  // Handle Reset Date back to Today
+  const handleResetToToday = () => {
+    setSelectedDate(todayStr);
+    setCurrentPage(1);
+    setShowNotFoundToast(false);
+  };
+
   // Handle Logout Execution
   const handleConfirmLogout = async () => {
     try {
@@ -188,62 +251,52 @@ export default function Dashboard() {
     }
   };
 
-  // Financial Metrics Calculation matching Firestore schema & inventory cost lookup
-  const { dashboardMetrics, todaySoldItems } = useMemo(() => {
-    let todaySales = 0;
-    let todayEstProfit = 0;
-    let totalCredit = 0;
-    let totalNetCash = 0;
-
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+  // Dynamic Financial Metrics Calculation for the SELECTED DATE
+  const { dashboardMetrics, selectedSoldItems } = useMemo(() => {
+    let daySales = 0;
+    let dayEstProfit = 0;
+    let dayCredit = 0;
+    let dayNetCash = 0;
 
     const soldItemsAggregated: { [key: string]: { name: string; category: string; quantity: number; totalAmount: number } } = {};
 
     salesData.forEach((sale) => {
-      let saleDate: Date;
-      if (sale.date) {
-        saleDate = new Date(sale.date);
-      } else if (sale.createdAt?.seconds) {
-        saleDate = new Date(sale.createdAt.seconds * 1000);
-      } else if (sale.timestamp) {
-        saleDate = new Date(sale.timestamp);
-      } else {
-        saleDate = new Date();
-      }
+      const saleDate = getSaleDateObj(sale);
+      const saleDateStr = getLocalDateString(saleDate);
 
-      const grandTotal = Number(sale.grandTotal || sale.totalAmount || sale.amount || 0);
-      const paidAmount = Number(sale.paidAmount !== undefined ? sale.paidAmount : grandTotal);
+      // Only calculate metrics for sales matching selectedDate
+      if (saleDateStr === selectedDate) {
+        const grandTotal = Number(sale.grandTotal || sale.totalAmount || sale.amount || 0);
+        const paidAmount = Number(sale.paidAmount !== undefined ? sale.paidAmount : grandTotal);
 
-      // Extract Credit directly from Firestore Document
-      let saleCredit = 0;
-      if (sale.creditAmount !== undefined) {
-        saleCredit = Number(sale.creditAmount);
-      } else if (sale.pendingBalance !== undefined) {
-        saleCredit = Number(sale.pendingBalance);
-      } else if (String(sale.paymentType).toUpperCase() === 'CREDIT' || sale.isUdhaar) {
-        saleCredit = Math.max(0, grandTotal - paidAmount);
-      }
+        // Extract Credit directly from Firestore Document
+        let saleCredit = 0;
+        if (sale.creditAmount !== undefined) {
+          saleCredit = Number(sale.creditAmount);
+        } else if (sale.pendingBalance !== undefined) {
+          saleCredit = Number(sale.pendingBalance);
+        } else if (String(sale.paymentType).toUpperCase() === 'CREDIT' || sale.isUdhaar) {
+          saleCredit = Math.max(0, grandTotal - paidAmount);
+        }
 
-      totalCredit += saleCredit;
-      totalNetCash += Math.min(paidAmount, grandTotal);
+        daySales += grandTotal;
+        dayCredit += saleCredit;
+        dayNetCash += Math.min(paidAmount, grandTotal);
 
-      // Profit calculation: (Sell Price - Cost Price) * Quantity
-      let saleProfit = 0;
+        // Profit calculation for the day: (Sell Price - Cost Price) * Quantity
+        let saleProfit = 0;
 
-      if (Array.isArray(sale.items)) {
-        sale.items.forEach((item: any) => {
-          const qty = Number(item.quantity || 1);
-          const sellPrice = Number(item.price || item.unitPrice || 0);
-          
-          // Primary: Check item level costPrice; Secondary: Check inventory lookup map
-          const prodKey = String(item.name || '').trim().toLowerCase();
-          const lookupCost = inventoryCostMap[prodKey] || 0;
-          const costPrice = Number(item.costPrice || item.purchasePrice || lookupCost || 0);
+        if (Array.isArray(sale.items)) {
+          sale.items.forEach((item: any) => {
+            const qty = Number(item.quantity || 1);
+            const sellPrice = Number(item.price || item.unitPrice || 0);
+            
+            const prodKey = String(item.name || '').trim().toLowerCase();
+            const lookupCost = inventoryCostMap[prodKey] || 0;
+            const costPrice = Number(item.costPrice || item.purchasePrice || lookupCost || 0);
 
-          saleProfit += (sellPrice - costPrice) * qty;
+            saleProfit += (sellPrice - costPrice) * qty;
 
-          if (saleDate >= startOfToday) {
             const prodName = item.name || item.title || 'General Product';
             const catName = item.category || 'Agri Product';
             const itemTotal = Number(item.total || sellPrice * qty);
@@ -259,13 +312,10 @@ export default function Dashboard() {
                 totalAmount: itemTotal || grandTotal
               };
             }
-          }
-        });
-      }
+          });
+        }
 
-      if (saleDate >= startOfToday) {
-        todaySales += grandTotal;
-        todayEstProfit += saleProfit;
+        dayEstProfit += saleProfit;
       }
     });
 
@@ -273,20 +323,20 @@ export default function Dashboard() {
 
     return {
       dashboardMetrics: {
-        todaySales,
-        todayEstProfit,
-        totalCredit,
-        totalNetCash
+        totalSales: daySales,
+        totalEstProfit: dayEstProfit,
+        totalCredit: dayCredit,
+        totalNetCash: dayNetCash
       },
-      todaySoldItems: soldList
+      selectedSoldItems: soldList
     };
-  }, [salesData, inventoryCostMap]);
+  }, [salesData, inventoryCostMap, selectedDate]);
 
-  const totalPages = Math.ceil(todaySoldItems.length / itemsPerPage) || 1;
+  const totalPages = Math.ceil(selectedSoldItems.length / itemsPerPage) || 1;
   const currentSoldProducts = useMemo(() => {
     const startIdx = (currentPage - 1) * itemsPerPage;
-    return todaySoldItems.slice(startIdx, startIdx + itemsPerPage);
-  }, [todaySoldItems, currentPage]);
+    return selectedSoldItems.slice(startIdx, startIdx + itemsPerPage);
+  }, [selectedSoldItems, currentPage]);
 
   const navigationTabs = [
     { label: 'Home', icon: Home, href: '/dashboard' },
@@ -359,11 +409,22 @@ export default function Dashboard() {
       
       {/* ERROR TOAST */}
       {showErrorToast && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[110] bg-rose-600 text-white font-extrabold text-xs sm:text-sm px-5 py-3 rounded-2xl shadow-[0_0_30px_rgba(225,19,72,0.5)] flex items-center gap-3 border border-rose-400">
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[110] bg-rose-600 text-white font-extrabold text-xs sm:text-sm px-5 py-3 rounded-2xl shadow-[0_0_30px_rgba(225,19,72,0.5)] flex items-center gap-3 border border-rose-400 animate-in fade-in zoom-in-95">
           <AlertTriangle className="h-5 w-5 shrink-0" />
           <span>{errorMessage}</span>
           <button onClick={() => setShowErrorToast(false)} className="ml-2 hover:opacity-80">
             <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* BEAUTIFUL "DATA NOT FOUND" NOTIFICATION TOAST */}
+      {showNotFoundToast && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[110] bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white font-black text-xs sm:text-sm px-6 py-3.5 rounded-2xl shadow-[0_0_35px_rgba(249,115,22,0.6)] flex items-center gap-3 border border-amber-300 animate-in fade-in slide-in-from-top-4">
+          <Info className="h-5 w-5 shrink-0 animate-pulse text-yellow-200" />
+          <span>{notFoundMessage}</span>
+          <button onClick={() => setShowNotFoundToast(false)} className="ml-2 hover:opacity-80 bg-white/20 p-1 rounded-full">
+            <X className="h-3.5 w-3.5" />
           </button>
         </div>
       )}
@@ -502,29 +563,56 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* FINANCIAL OVERVIEW SECTION */}
+        {/* FINANCIAL OVERVIEW SECTION WITH CALENDAR DATE FILTER */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between px-1">
-            <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
+            <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
               FINANCIAL OVERVIEW
+              {selectedDate !== todayStr && (
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-500 border border-orange-500/30">
+                  {selectedDate}
+                </span>
+              )}
             </span>
-            <span className="text-[10px] font-black text-emerald-500">
-              Firestore Sync
-            </span>
+
+            {/* CALENDAR FILTER INPUT (Restricted to 1 Month Back) */}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 bg-white dark:bg-[#0c1222] border-2 border-orange-500/50 rounded-2xl px-3 py-1.5 shadow-sm hover:border-orange-500 transition-all">
+                <Calendar className="h-4 w-4 text-orange-500 shrink-0" />
+                <input
+                  type="date"
+                  value={selectedDate}
+                  min={minDateStr}
+                  max={todayStr}
+                  onChange={handleDateChange}
+                  className="bg-transparent text-xs font-black text-slate-800 dark:text-slate-100 outline-none cursor-pointer"
+                />
+              </div>
+
+              {selectedDate !== todayStr && (
+                <button
+                  onClick={handleResetToToday}
+                  title="Reset to Today"
+                  className="p-2 rounded-xl bg-orange-500/10 text-orange-500 hover:bg-orange-500 hover:text-white transition-all border border-orange-500/30"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="space-y-3.5">
-            {/* TODAY SALES CARD */}
+            {/* SALES CARD */}
             <div className="bg-white dark:bg-[#0c1222] p-5 rounded-[2rem] border-2 border-emerald-400/60 shadow-sm flex items-center justify-between">
               <div className="space-y-1">
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                  TODAY SALES
+                  {selectedDate === todayStr ? 'TODAY SALES' : `SALES (${selectedDate})`}
                 </span>
                 <p className="text-2xl font-black text-slate-900 dark:text-white">
-                  Rs. {dashboardMetrics.todaySales.toLocaleString()}
+                  Rs. {dashboardMetrics.totalSales.toLocaleString()}
                 </p>
                 <p className="text-[10px] font-extrabold text-emerald-500">
-                  Live Sales Today
+                  {selectedDate === todayStr ? 'Live Sales Today' : `Total Sales on ${selectedDate}`}
                 </p>
               </div>
               <div className="h-12 w-12 rounded-2xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
@@ -539,7 +627,7 @@ export default function Dashboard() {
                   EST. PROFIT
                 </span>
                 <p className="text-2xl font-black text-slate-900 dark:text-white">
-                  Rs. {dashboardMetrics.todayEstProfit.toLocaleString()}
+                  Rs. {dashboardMetrics.totalEstProfit.toLocaleString()}
                 </p>
                 <p className="text-[10px] font-extrabold text-emerald-500">
                   Calculated Net Profit
@@ -588,11 +676,11 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* TODAY'S SOLD PRODUCTS & QUANTITY CARDS WITH PAGINATION OF 5 */}
+        {/* SOLD PRODUCTS FOR SELECTED DATE WITH PAGINATION OF 5 */}
         <div className="space-y-3 pt-2">
           <div className="flex items-center justify-between px-1">
             <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">
-              TODAY'S SOLD PRODUCTS ({todaySoldItems.length})
+              {selectedDate === todayStr ? "TODAY'S SOLD PRODUCTS" : `SOLD PRODUCTS (${selectedDate})`} ({selectedSoldItems.length})
             </span>
             <span className="text-[10px] font-bold text-slate-400">
               Page {currentPage} of {totalPages}
@@ -632,8 +720,11 @@ export default function Dashboard() {
               ))}
             </div>
           ) : (
-            <div className="p-8 text-center bg-white dark:bg-[#0c1222] rounded-3xl border border-dashed border-slate-300 dark:border-slate-800">
-              <p className="text-xs font-bold text-slate-400">No sales completed today yet.</p>
+            <div className="p-8 text-center bg-white dark:bg-[#0c1222] rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 space-y-2">
+              <Info className="h-8 w-8 text-amber-500 mx-auto opacity-70" />
+              <p className="text-xs font-bold text-slate-400">
+                No sales completed on {selectedDate}.
+              </p>
             </div>
           )}
 

@@ -8,7 +8,6 @@ import {
   Moon,
   Plus,
   Package,
-  Boxes,
   Home,
   Upload,
   X,
@@ -26,7 +25,9 @@ import {
   ShoppingCart,
   PieChart,
   PackagePlus,
-  Layers
+  Layers,
+  Printer,
+  ShieldCheck
 } from 'lucide-react';
 
 // Firebase Imports
@@ -62,7 +63,7 @@ interface CategoryItem {
 
 interface CenterToast {
   isOpen: boolean;
-  type: 'success' | 'delete';
+  type: 'success' | 'delete' | 'print';
   title: string;
   message: string;
 }
@@ -94,6 +95,9 @@ export default function Inventory() {
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [deleteConfirmProduct, setDeleteConfirmProduct] = useState<Product | null>(null);
+
+  // Print Permission Modal & Printing State
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
 
   // Center Notification Toast State
   const [toast, setToast] = useState<CenterToast>({
@@ -152,17 +156,18 @@ export default function Inventory() {
     const handlePopState = () => {
       if (activeCategoryId) {
         setActiveCategoryId(null);
-      } else if (isAddProductOpen || editingCategory || deleteConfirmCategory || deleteConfirmProduct) {
+      } else if (isAddProductOpen || editingCategory || deleteConfirmCategory || deleteConfirmProduct || isPrintModalOpen) {
         setIsAddProductOpen(false);
         setEditingCategory(null);
         setDeleteConfirmCategory(null);
         setDeleteConfirmProduct(null);
+        setIsPrintModalOpen(false);
       }
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [activeCategoryId, isAddProductOpen, editingCategory, deleteConfirmCategory, deleteConfirmProduct]);
+  }, [activeCategoryId, isAddProductOpen, editingCategory, deleteConfirmCategory, deleteConfirmProduct, isPrintModalOpen]);
 
   const handleSelectCategory = (categoryId: string) => {
     window.history.pushState({ categoryId }, '', '#view-category');
@@ -178,11 +183,11 @@ export default function Inventory() {
   };
 
   // Notification Popup Trigger
-  const showCenterNotification = (type: 'success' | 'delete', title: string, message: string) => {
+  const showCenterNotification = (type: 'success' | 'delete' | 'print', title: string, message: string) => {
     setToast({ isOpen: true, type, title, message });
     setTimeout(() => {
       setToast((prev) => ({ ...prev, isOpen: false }));
-    }, 2200);
+    }, 2500);
   };
 
   // Listen to Firebase Auth
@@ -199,7 +204,7 @@ export default function Inventory() {
     return user.email ? user.email.toLowerCase().trim() : user.uid;
   };
 
-  // Real-time Firestore Sync
+  // Real-time Firestore Sync (Products Sorted: Newest Created First)
   useEffect(() => {
     if (!currentUser) {
       setCategoryList([]);
@@ -210,11 +215,27 @@ export default function Inventory() {
     const userCategoriesRef = collection(db, 'users', userDocId, 'inventory_categories');
     
     const unsubscribe = onSnapshot(userCategoriesRef, (snapshot) => {
-      const fetchedCategories: CategoryItem[] = snapshot.docs.map((docSnap) => ({
-        id: docSnap.id,
-        ...(docSnap.data() as Omit<CategoryItem, 'id'>)
-      }));
+      const fetchedCategories: CategoryItem[] = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data();
+        let productsList: Product[] = Array.isArray(data.products) ? data.products : [];
+        
+        // Sort products inside category: Newest created first
+        productsList = productsList.sort((a, b) => {
+          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : a.id || 0;
+          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : b.id || 0;
+          return dateB - dateA;
+        });
 
+        return {
+          id: docSnap.id,
+          name: data.name || '',
+          code: data.code || '',
+          createdAt: data.createdAt,
+          products: productsList
+        };
+      });
+
+      // Sort Categories: Newest created or alphabetized
       fetchedCategories.sort((a, b) => 
         a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
       );
@@ -245,14 +266,21 @@ export default function Inventory() {
         const matchesCategory = c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q);
         const matchesProductName = (c.products || []).some((p) => p.name.toLowerCase().includes(q));
         return matchesCategory || matchesProductName;
-      })
-      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+      });
   }, [categoryList, searchQuery]);
 
+  // PRODUCTS FILTERING & SORTING (NEWEST PRODUCTS SHOWN FIRST)
   const sortedAndFilteredProducts = useMemo(() => {
     if (!currentCategory) return [];
 
     let list = [...(currentCategory.products || [])];
+
+    // Ensure Newest Products are Shown First
+    list.sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : a.id;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : b.id;
+      return timeB - timeA;
+    });
 
     return list.filter((p) =>
       p.name.toLowerCase().includes(productSearchQuery.toLowerCase())
@@ -352,7 +380,7 @@ export default function Inventory() {
     }
   };
 
-  // SAVE PRODUCT TO FIREBASE
+  // SAVE PRODUCT TO FIREBASE (FETCH / SHOWN FIRST)
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!productName || !costPrice || !currentUser) return;
@@ -361,7 +389,7 @@ export default function Inventory() {
       const userDocId = getUserDocId(currentUser);
       let targetCategoryId = activeCategoryId || categoryList[0]?.id;
 
-      // If no category exists at all, create a default "General Inventory" category
+      // Create default category if none exists
       if (!targetCategoryId) {
         targetCategoryId = 'general_inventory';
         const defaultCategoryRef = doc(db, 'users', userDocId, 'inventory_categories', targetCategoryId);
@@ -404,6 +432,7 @@ export default function Inventory() {
           avatar: productAvatar || defaultAvatar,
           createdAt: new Date().toISOString()
         };
+        // Unshift adds product to top of list so it is created & fetched first
         updatedProducts.unshift(newProductObj);
       }
 
@@ -415,11 +444,243 @@ export default function Inventory() {
       showCenterNotification(
         'success',
         isEditMode ? 'Product Updated!' : 'Product Saved!',
-        isEditMode ? `${productName} details updated.` : `${productName} saved to Firebase.`
+        isEditMode ? `${productName} details updated.` : `${productName} added to top of list.`
       );
     } catch (error) {
       console.error("Error saving product to Firebase:", error);
     }
+  };
+
+  // PRINT INVOICE & STOCK INVENTORY FUNCTION WITH PERMISSION & NOTIFICATION
+  const handleConfirmAndPrint = () => {
+    setIsPrintModalOpen(false);
+    showCenterNotification('print', 'Preparing PDF...', 'Generating Chaudhary Trader Stock Invoice.');
+
+    const productsToPrint = currentCategory 
+      ? sortedAndFilteredProducts 
+      : categoryList.flatMap(c => c.products || []);
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const totalGrandCost = productsToPrint.reduce(
+      (sum, p) => sum + Number(p.costPrice || 0) * Number(p.quantity || 0), 0
+    );
+
+    const currentDate = new Date().toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    });
+
+    const currentTime = new Date().toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Chaudhary Trader - Stock Inventory Invoice</title>
+          <style>
+            @page { size: A4; margin: 15mm; }
+            body { 
+              font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; 
+              color: #1e293b; 
+              background: #ffffff; 
+              margin: 0; 
+              padding: 0; 
+            }
+            .invoice-card { 
+              width: 100%; 
+              max-width: 800px; 
+              margin: 0 auto; 
+              padding: 20px; 
+              box-sizing: border-box;
+            }
+            .header-title { 
+              text-align: center; 
+              margin-bottom: 25px; 
+              border-bottom: 3px solid #f97316;
+              padding-bottom: 15px;
+            }
+            .company-name { 
+              font-size: 32px; 
+              font-weight: 900; 
+              color: #0f172a; 
+              letter-spacing: 1px;
+              text-transform: uppercase;
+              margin: 0;
+            }
+            .tagline {
+              font-size: 13px;
+              color: #f97316;
+              font-weight: 700;
+              margin-top: 4px;
+            }
+            .details-box {
+              display: flex;
+              justify-content: space-between;
+              background-color: #f8fafc;
+              border: 1px solid #e2e8f0;
+              border-radius: 12px;
+              padding: 15px 20px;
+              margin-bottom: 20px;
+              font-size: 12px;
+            }
+            .details-col p { margin: 4px 0; font-weight: 600; color: #475569; }
+            .details-col p strong { color: #0f172a; font-weight: 800; }
+            
+            table { 
+              width: 100%; 
+              border-collapse: collapse; 
+              margin-top: 15px; 
+            }
+            th { 
+              background-color: #0c1222; 
+              color: #ffffff; 
+              font-size: 11px; 
+              font-weight: 800; 
+              text-transform: uppercase; 
+              padding: 10px 12px; 
+              text-align: left; 
+            }
+            td { 
+              padding: 10px 12px; 
+              border-bottom: 1px solid #e2e8f0; 
+              font-size: 12px; 
+              font-weight: 600; 
+              color: #334155;
+            }
+            tr:nth-child(even) { background-color: #f8fafc; }
+            .text-right { text-align: right; }
+            .text-center { text-align: center; }
+            
+            .summary-container {
+              margin-top: 25px;
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+            }
+            .owner-section {
+              border: 1px dashed #cbd5e1;
+              padding: 12px 20px;
+              border-radius: 10px;
+              text-align: center;
+              min-width: 220px;
+            }
+            .owner-title { font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 700; }
+            .owner-name { font-size: 14px; font-weight: 900; color: #0f172a; margin-top: 4px; }
+            
+            .total-box {
+              background: #0c1222;
+              color: #ffffff;
+              padding: 12px 20px;
+              border-radius: 10px;
+              text-align: right;
+              min-width: 200px;
+            }
+            .total-box p { margin: 0; font-size: 11px; text-transform: uppercase; color: #94a3b8; }
+            .total-box h2 { margin: 4px 0 0 0; font-size: 20px; color: #f97316; font-weight: 900; }
+
+            .footer-note {
+              text-align: center;
+              margin-top: 30px;
+              font-size: 10px;
+              color: #94a3b8;
+              border-top: 1px solid #f1f5f9;
+              padding-top: 10px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="invoice-card">
+            
+            <!-- HEADER -->
+            <div class="header-title">
+              <h1 class="company-name">Chaudhary Trader</h1>
+              <div class="tagline">Stock Inventory & Product Invoice Statement</div>
+            </div>
+
+            <!-- ADDRESS & INFO -->
+            <div class="details-box">
+              <div class="details-col">
+                <p><strong>Address:</strong> Chak No 389 Jb Toba Tek Singh Punjab Pakistan</p>
+                <p><strong>Phone:</strong> +92 3261770389</p>
+                <p><strong>Email:</strong> alitahir243715@gmail.com</p>
+              </div>
+              <div class="details-col" style="text-align: right;">
+                <p><strong>Date:</strong> ${currentDate}</p>
+                <p><strong>Time:</strong> ${currentTime}</p>
+                <p><strong>Category:</strong> ${currentCategory ? currentCategory.name : 'All Categories'}</p>
+              </div>
+            </div>
+
+            <!-- PRODUCT TABLE -->
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 8%;">S.#</th>
+                  <th style="width: 42%;">Product Name</th>
+                  <th class="text-center" style="width: 15%;">Quantity</th>
+                  <th class="text-right" style="width: 17%;">Rate (PKR)</th>
+                  <th class="text-right" style="width: 18%;">Total (PKR)</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${productsToPrint.length === 0 ? `
+                  <tr>
+                    <td colspan="5" class="text-center" style="padding: 20px;">No products available to print.</td>
+                  </tr>
+                ` : productsToPrint.map((prod, idx) => {
+                  const rate = Number(prod.costPrice || 0);
+                  const qty = Number(prod.quantity || 0);
+                  const itemTotal = rate * qty;
+                  return `
+                    <tr>
+                      <td>${idx + 1}</td>
+                      <td><strong>${prod.name}</strong></td>
+                      <td class="text-center">${prod.quantity}</td>
+                      <td class="text-right">PKR ${rate.toLocaleString()}</td>
+                      <td class="text-right">PKR ${itemTotal.toLocaleString()}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+
+            <!-- SUMMARY & OWNER FOOTER -->
+            <div class="summary-container">
+              <div class="owner-section">
+                <div class="owner-title">Authorized Owner</div>
+                <div class="owner-name">Chaudhary Khalil Tahir </div>
+              </div>
+
+              <div class="total-box">
+                <p>Grand Total Stock Value</p>
+                <h2>PKR ${totalGrandCost.toLocaleString()}</h2>
+              </div>
+            </div>
+
+            <div class="footer-note">
+              This is an official computer-generated stock inventory invoice statement for Chaudhary Trader.
+            </div>
+
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 800);
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
   };
 
   // NAV BAR ITEMS MATCHING DESIGN EXACTLY
@@ -475,6 +736,16 @@ export default function Inventory() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* PRINT INVENTORY BUTTON */}
+            <button
+              onClick={() => setIsPrintModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-white font-extrabold text-xs shadow-[0_0_15px_rgba(249,115,22,0.35)] hover:shadow-[0_0_25px_rgba(249,115,22,0.55)] transition-all active:scale-95 shrink-0"
+              title="Print Stock Inventory Invoice"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Print Stock</span>
+            </button>
+
             <button
               onClick={() => setIsDark(!isDark)}
               className="flex h-7 w-12 items-center rounded-full bg-slate-200/80 p-0.5 transition-all dark:bg-slate-800 border border-slate-300/40 dark:border-slate-700/50 hover:shadow-[0_0_12px_rgba(249,115,22,0.2)]"
@@ -518,7 +789,6 @@ export default function Inventory() {
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500"></span>
                     </span>
-                    <span className="text-[11px] font-black uppercase tracking-wider">LIVE ENGINE ACTIVE</span>
                   </div>
 
                   <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400 font-extrabold text-xs shadow-[0_0_12px_rgba(245,158,11,0.2)]">
@@ -546,10 +816,10 @@ export default function Inventory() {
 
                   <Button
                     variant="outline"
-                    onClick={() => navigate('/analytics')}
-                    className="rounded-2xl border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 font-extrabold text-xs px-5 py-3 hover:bg-slate-100 dark:hover:bg-slate-900 transition-all"
+                    onClick={() => setIsPrintModalOpen(true)}
+                    className="rounded-2xl border-orange-500/30 dark:border-orange-500/40 text-orange-600 dark:text-orange-400 font-extrabold text-xs px-5 py-3 hover:bg-orange-500/10 transition-all flex items-center gap-2"
                   >
-                    Sell Analytics
+                    <Printer className="h-4 w-4" /> Print Stock Invoice
                   </Button>
                 </div>
 
@@ -646,8 +916,11 @@ export default function Inventory() {
                 <span>{currentCategory.name}</span>
               </button>
 
-              <button className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 transition-colors">
-                <MoreVertical className="h-5 w-5" />
+              <button 
+                onClick={() => setIsPrintModalOpen(true)}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-orange-500/10 hover:bg-orange-500/20 text-orange-600 dark:text-orange-400 text-xs font-black border border-orange-500/20 shadow-[0_0_12px_rgba(249,115,22,0.2)]"
+              >
+                <Printer className="h-3.5 w-3.5" /> Print Category
               </button>
             </div>
 
@@ -683,7 +956,7 @@ export default function Inventory() {
                 <div className="shrink-0 text-right pl-1 min-w-[55px]">Actions</div>
               </div>
 
-              {/* TABLE BODY */}
+              {/* TABLE BODY (NO TRUNCATION FIX FOR MOBILE) */}
               {paginatedProducts.length === 0 ? (
                 <div className="text-center py-8 text-xs font-bold text-slate-400">
                   No products in this category.
@@ -692,9 +965,9 @@ export default function Inventory() {
                 paginatedProducts.map((product) => (
                   <div
                     key={product.id}
-                    className="flex items-center justify-between gap-1 px-2 py-2.5 rounded-2xl hover:bg-orange-500/5 dark:hover:bg-slate-900/60 transition-colors border-b border-slate-100 dark:border-slate-800/40 last:border-0 w-full group"
+                    className="flex items-center justify-between gap-1.5 px-2 py-2.5 rounded-2xl hover:bg-orange-500/5 dark:hover:bg-slate-900/60 transition-colors border-b border-slate-100 dark:border-slate-800/40 last:border-0 w-full group"
                   >
-                    {/* PRODUCT NAME & IMAGE */}
+                    {/* PRODUCT NAME & IMAGE - Full Name Wrap Fix */}
                     <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-1">
                       <img
                         src={product.avatar}
@@ -702,31 +975,31 @@ export default function Inventory() {
                         className="h-9 w-9 rounded-xl object-cover shrink-0 border border-slate-200 dark:border-slate-800 shadow-sm bg-slate-100 dark:bg-slate-900"
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-black text-slate-900 dark:text-slate-100 truncate group-hover:text-orange-500 transition-colors">
+                        <p className="text-xs font-black text-slate-900 dark:text-slate-100 leading-tight break-words line-clamp-2">
                           {product.name}
                         </p>
-                        <p className="text-[9px] font-bold text-slate-400 truncate mt-0.5">
+                        <p className="text-[9px] font-bold text-slate-400 mt-0.5 whitespace-nowrap">
                           Cost: PKR {Number(product.costPrice || 0).toLocaleString()}
                         </p>
                       </div>
                     </div>
 
                     {/* PRODUCT QUANTITY */}
-                    <div className="w-16 shrink-0 text-center text-xs font-black text-slate-800 dark:text-slate-200">
-                      <span className="bg-orange-500/10 text-orange-600 dark:text-orange-400 px-2 py-0.5 rounded-md border border-orange-500/20">
+                    <div className="w-14 shrink-0 text-center text-xs font-black text-slate-800 dark:text-slate-200">
+                      <span className="bg-orange-500/10 text-orange-600 dark:text-orange-400 px-2 py-0.5 rounded-md border border-orange-500/20 inline-block">
                         {product.quantity}
                       </span>
                     </div>
 
                     {/* COST PRICE */}
-                    <div className="shrink-0 px-1 text-center min-w-[70px]">
-                      <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400">
+                    <div className="shrink-0 px-1 text-center min-w-[65px]">
+                      <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400 block">
                         PKR {Number(product.costPrice || 0).toLocaleString()}
                       </span>
                     </div>
 
                     {/* ACTIONS */}
-                    <div className="shrink-0 flex items-center justify-end gap-1 pl-1 min-w-[55px]">
+                    <div className="shrink-0 flex items-center justify-end gap-1 pl-1 min-w-[50px]">
                       <button
                         onClick={() => handleOpenEditProduct(product)}
                         className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 hover:shadow-[0_0_10px_rgba(16,185,129,0.4)] transition-all active:scale-95"
@@ -786,15 +1059,21 @@ export default function Inventory() {
           <div className={`bg-white dark:bg-[#0c1222] border rounded-3xl p-6 max-w-xs w-full text-center space-y-3 relative shadow-2xl transition-all duration-300 ${
             toast.type === 'success' 
               ? 'border-emerald-500/50 shadow-[0_0_50px_rgba(16,185,129,0.4)]' 
+              : toast.type === 'print'
+              ? 'border-orange-500/50 shadow-[0_0_50px_rgba(249,115,22,0.4)]'
               : 'border-rose-500/50 shadow-[0_0_50px_rgba(244,63,94,0.4)]'
           }`}>
             <div className={`w-14 h-14 mx-auto rounded-full flex items-center justify-center animate-bounce ${
               toast.type === 'success' 
                 ? 'bg-emerald-500/20 text-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)]' 
+                : toast.type === 'print'
+                ? 'bg-orange-500/20 text-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.3)]'
                 : 'bg-rose-500/20 text-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.3)]'
             }`}>
               {toast.type === 'success' ? (
                 <CheckCircle2 className="h-8 w-8" />
+              ) : toast.type === 'print' ? (
+                <Printer className="h-8 w-8" />
               ) : (
                 <Trash2 className="h-8 w-8" />
               )}
@@ -808,6 +1087,43 @@ export default function Inventory() {
                 {toast.message}
               </p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* PRINT PERMISSION MODAL WITH GLOWING NOTIFICATION */}
+      {isPrintModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-[#0c1222] border border-orange-500/40 rounded-3xl max-w-sm w-full p-6 shadow-[0_0_50px_rgba(249,115,22,0.35)] relative text-center space-y-4">
+            
+            <div className="w-14 h-14 bg-orange-500/10 text-orange-500 rounded-2xl flex items-center justify-center mx-auto border border-orange-500/30 shadow-[0_0_20px_rgba(249,115,22,0.25)] animate-pulse">
+              <ShieldCheck className="h-7 w-7 text-orange-500" />
+            </div>
+
+            <div>
+              <h3 className="text-base font-black text-slate-900 dark:text-white">
+                Print Stock Invoice?
+              </h3>
+              <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                Allow app to generate official <span className="text-orange-500 font-extrabold">Chaudhary Trader</span> invoice in PDF print layout.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <Button
+                onClick={() => setIsPrintModalOpen(false)}
+                className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-2xl font-black text-xs py-3 transition-colors"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleConfirmAndPrint}
+                className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white rounded-2xl font-black text-xs py-3 shadow-[0_0_20px_rgba(249,115,22,0.4)] transition-all active:scale-95 flex items-center justify-center gap-1.5"
+              >
+                <Printer className="h-4 w-4" /> Allow & Print
+              </Button>
+            </div>
+
           </div>
         </div>
       )}
