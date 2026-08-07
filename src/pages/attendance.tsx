@@ -41,10 +41,7 @@ import {
   User,
   Package,
   Printer,
-  FileText,
-  Calendar,
-  Layers,
-  RotateCcw
+  FileText
 } from 'lucide-react';
 
 // Firebase Configuration
@@ -62,7 +59,7 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-// Strict Page Limit of 5 Records per Page as requested
+// Strict Page Limit of 5 Records per Page
 const CUSTOMERS_PER_PAGE = 5;
 
 interface CartItem {
@@ -85,7 +82,7 @@ interface CustomerBill {
 }
 
 interface MonthlySummary {
-  monthKey: string; // Format: "YYYY-MM" (e.g. "2026-06")
+  monthKey: string; // Format: "YYYY-MM"
   totalSales: number;
   totalCredit: number;
   totalPaid: number;
@@ -193,7 +190,7 @@ export default function SellProduct() {
           ...d.data()
         })) as CustomerBill[];
 
-        // --- AUTOMATED DATABASE CLEANUP (60 Days / 2-Month Retention Logic) ---
+        // Automated Database Cleanup (60 Days / 2-Month Retention Logic)
         const now = new Date();
         const sixtyDaysMs = 60 * 24 * 60 * 60 * 1000;
         
@@ -205,7 +202,6 @@ export default function SellProduct() {
           const timeDiff = now.getTime() - billDate.getTime();
           const monthKey = `${billDate.getFullYear()}-${String(billDate.getMonth() + 1).padStart(2, '0')}`;
 
-          // Always sum into monthly aggregate for total year tracking
           if (!monthlyCalculations[monthKey]) {
             monthlyCalculations[monthKey] = { totalSales: 0, totalCredit: 0, totalPaid: 0 };
           }
@@ -213,17 +209,13 @@ export default function SellProduct() {
           monthlyCalculations[monthKey].totalCredit += bill.creditAmount || 0;
           monthlyCalculations[monthKey].totalPaid += bill.paidAmount || 0;
 
-          // Clean older paid history (> 60 days AND credit == 0)
           if (timeDiff > sixtyDaysMs && (bill.creditAmount === 0 || !bill.creditAmount)) {
-            // Delete paid customer record from database so DB is never bloated
             await deleteDoc(doc(db, 'users', currentUserEmail, 'sales', bill.id));
           } else {
-            // Keep current/previous 60 days records OR any bill with remaining credit
             activeBills.push(bill);
           }
         }
 
-        // Update/Sync Monthly Summaries in Firestore
         for (const [mKey, data] of Object.entries(monthlyCalculations)) {
           const summaryDocRef = doc(db, 'users', currentUserEmail, 'monthly_summaries', mKey);
           const summaryData: MonthlySummary = {
@@ -248,24 +240,21 @@ export default function SellProduct() {
     fetchDataAndCleanup();
   }, [currentUserEmail]);
 
-  // Total Sales of Current Year (1 Jan - 31 Dec) Calculation
+  // Total Sales of Current Year Calculation
   const totalYearlySales = useMemo(() => {
     const currentYear = new Date().getFullYear();
     let total = 0;
 
-    // Sum from monthly summaries
     Object.keys(monthlySummaries).forEach(mKey => {
       if (mKey.startsWith(String(currentYear))) {
         total += monthlySummaries[mKey].totalSales || 0;
       }
     });
 
-    // Also include live bills that might not have updated summaries yet
     customerBills.forEach(bill => {
       const bYear = new Date(bill.date).getFullYear();
       if (bYear === currentYear) {
         const mKey = `${bYear}-${String(new Date(bill.date).getMonth() + 1).padStart(2, '0')}`;
-        // If this month isn't in summaries yet, add bill directly
         if (!monthlySummaries[mKey]) {
           total += bill.grandTotal || 0;
         }
@@ -275,7 +264,7 @@ export default function SellProduct() {
     return total;
   }, [monthlySummaries, customerBills]);
 
-  // Frequent Customers (3+ Orders)
+  // Frequent Customers
   const frequentCustomers = useMemo(() => {
     const orderCounts: Record<string, number> = {};
     customerBills.forEach(bill => {
@@ -402,11 +391,9 @@ export default function SellProduct() {
         creditAmount: calculatedPayment.credit
       };
 
-      // Save Sale Document
       const billRef = doc(db, 'users', currentUserEmail, 'sales', billData.id);
       await setDoc(billRef, billData);
 
-      // Update Monthly Summary Aggregation Document
       const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const summaryDocRef = doc(db, 'users', currentUserEmail, 'monthly_summaries', monthKey);
       const currentMonthSummary = monthlySummaries[monthKey] || { totalSales: 0, totalCredit: 0, totalPaid: 0 };
@@ -422,7 +409,6 @@ export default function SellProduct() {
       
       setMonthlySummaries(prev => ({ ...prev, [monthKey]: newMonthSummary }));
 
-      // Deduct Inventory Stock
       const genInvRef = doc(db, 'users', currentUserEmail, 'inventory_categories', 'general_inventory');
       const docSnap = await getDoc(genInvRef);
 
@@ -514,12 +500,11 @@ export default function SellProduct() {
     return filteredCustomerBills.slice(currentStartRecord, currentStartRecord + CUSTOMERS_PER_PAGE);
   }, [filteredCustomerBills, customerPage, currentStartRecord]);
 
-  // Reset page when filter or search changes
   useEffect(() => {
     setCustomerPage(1);
   }, [customerSearchQuery, dateFilterRange]);
 
-  // Invoice Generation & Printing Logic
+  // Invoice Generation Logic
   const handleGenerateInvoiceRange = (range: 'today' | '3days' | 'week' | '15days' | 'month') => {
     const now = new Date();
     const todayStr = now.toDateString();
@@ -665,7 +650,7 @@ export default function SellProduct() {
   ];
 
   return (
-    <div className={`min-h-screen bg-[#f8fafc] dark:bg-[#070b13] text-slate-900 dark:text-slate-100 transition-colors duration-300 pb-36 ${isDark ? 'dark' : ''}`}>
+    <div className={`min-h-screen bg-[#f8fafc] dark:bg-[#070b13] text-slate-900 dark:text-slate-100 transition-colors duration-300 pb-44 ${isDark ? 'dark' : ''}`}>
       
       {/* ERROR TOAST */}
       {showErrorToast && (
@@ -687,12 +672,12 @@ export default function SellProduct() {
       )}
 
       {/* HEADER NAVBAR */}
-      <div className="w-full bg-white/70 dark:bg-[#070b13]/80 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-800/60 sticky top-0 z-40">
+      <div className="w-full bg-white/80 dark:bg-[#070b13]/80 backdrop-blur-md border-b border-slate-200/60 dark:border-slate-800/60 sticky top-0 z-40">
         <div className="mx-auto max-w-7xl flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
             <Link
               to="/"
-              className="flex items-center justify-center h-10 w-10 rounded-full bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-[0_0_20px_rgba(249,115,22,0.5)] hover:scale-105 transition-all"
+              className="flex items-center justify-center h-10 w-10 rounded-full bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-[0_0_20px_rgba(249,115,22,0.4)] hover:scale-105 transition-all"
             >
               <ArrowLeft className="h-5 w-5 stroke-[2.5]" />
             </Link>
@@ -704,16 +689,16 @@ export default function SellProduct() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsDark(!isDark)}
-              className="flex h-8 w-14 items-center rounded-full bg-slate-200/80 p-1 dark:bg-slate-800 border border-slate-300/50 dark:border-slate-700/50"
+              className="flex h-8 w-14 items-center rounded-full bg-slate-200/80 p-1 dark:bg-slate-800 border border-slate-300/50 dark:border-slate-700/50 transition-colors"
             >
               <div className={`flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-md transition-transform duration-300 ${isDark ? 'translate-x-6 bg-slate-900 text-yellow-400' : 'text-orange-500'}`}>
                 {isDark ? <Moon className="h-3.5 w-3.5 fill-current" /> : <Sun className="h-3.5 w-3.5 fill-current" />}
               </div>
             </button>
 
-            <div className="relative rounded-2xl p-2.5 text-slate-500 hover:text-orange-500 dark:text-slate-400 transition-all cursor-pointer">
+            <div className="relative rounded-2xl p-2 text-slate-500 hover:text-orange-500 dark:text-slate-400 transition-all cursor-pointer">
               <Bell className="h-5 w-5" />
-              <span className="absolute right-2 top-2 flex h-2.5 w-2.5">
+              <span className="absolute right-1.5 top-1.5 flex h-2.5 w-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500"></span>
               </span>
@@ -724,8 +709,8 @@ export default function SellProduct() {
 
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-8">
         
-        {/* SELLING PRODUCTS HERO CARD (MATCHING SCREENSHOT WITH YEARLY SALES OVERVIEW) */}
-        <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-amber-50/80 via-white to-orange-50/40 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-6 md:p-8 border-2 border-orange-500/80 shadow-[0_0_35px_rgba(249,115,22,0.2)]">
+        {/* SELLING PRODUCTS HERO CARD */}
+        <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-amber-50/90 via-white to-orange-50/50 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-6 md:p-8 border-2 border-orange-500/80 shadow-[0_0_35px_rgba(249,115,22,0.15)]">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
             <div className="space-y-2 max-w-xl">
               <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/30">
@@ -740,19 +725,19 @@ export default function SellProduct() {
               </p>
             </div>
 
-            {/* TOTAL SALES OF THE YEAR (FROM 1 JAN TO 31 DEC) STAT CARD */}
-            <div className="bg-white/90 dark:bg-[#070b13]/90 backdrop-blur-xl border-2 border-orange-500/40 rounded-[2rem] p-5 flex items-center gap-4 shadow-xl shrink-0 min-w-[280px]">
+            {/* TOTAL SALES OF THE YEAR STAT CARD */}
+            <div className="bg-white/95 dark:bg-[#070b13]/95 backdrop-blur-xl border-2 border-orange-500/40 rounded-[2rem] p-5 flex items-center gap-4 shadow-xl w-full sm:w-auto shrink-0 min-w-[280px]">
               <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 text-white flex items-center justify-center shadow-lg shadow-orange-500/30 shrink-0">
                 <Banknote className="h-7 w-7 stroke-[2.2]" />
               </div>
-              <div className="space-y-0.5">
-                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+              <div className="space-y-0.5 overflow-hidden">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block truncate">
                   TOTAL SALES OF THE YEAR
                 </span>
                 <span className="text-[10px] font-bold text-orange-500 block">
                   (1 JAN TO 31 DEC)
                 </span>
-                <div className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">
+                <div className="text-2xl font-black tracking-tight text-slate-900 dark:text-white truncate">
                   Rs. {totalYearlySales.toLocaleString()}
                 </div>
               </div>
@@ -835,11 +820,11 @@ export default function SellProduct() {
                     <select
                       value={selectedProductId}
                       onChange={(e) => handleProductSelect(e.target.value)}
-                      className="w-full appearance-none bg-slate-50 dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 rounded-2xl py-3 px-4 text-xs font-extrabold text-slate-800 dark:text-slate-100 outline-none focus:border-orange-500 cursor-pointer"
+                      className="w-full appearance-none bg-slate-50 dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 rounded-2xl py-3 px-4 pr-10 text-xs font-extrabold text-slate-800 dark:text-slate-100 outline-none focus:border-orange-500 cursor-pointer truncate"
                     >
-                      <option value="">-- Choose Pesticide --</option>
+                      <option value="" className="bg-white dark:bg-[#070b13] text-slate-800 dark:text-slate-100">-- Choose Pesticide --</option>
                       {inventory.map((prod) => (
-                        <option key={prod.id} value={prod.id}>
+                        <option key={prod.id} value={prod.id} className="bg-white dark:bg-[#070b13] text-slate-800 dark:text-slate-100">
                           {prod.name} (Stock: {prod.stock}) - Rs. {prod.price}
                         </option>
                       ))}
@@ -1040,7 +1025,6 @@ export default function SellProduct() {
           <div className="lg:col-span-5 space-y-6">
             <div className="bg-white dark:bg-[#0c1222] p-6 rounded-[2rem] border border-slate-200/80 dark:border-slate-800/60 shadow-sm space-y-5">
               
-              {/* HEADER WITH GENERATE INVOICE BUTTON (EXACT MATCH TO DESIGN) */}
               <div className="space-y-3">
                 <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
                   <Receipt className="h-6 w-6 text-orange-500" />
@@ -1149,15 +1133,13 @@ export default function SellProduct() {
                 )}
               </div>
 
-              {/* BEAUTIFUL PAGINATION UI WITH 5 ITEMS PER PAGE (MATCHING SCREENSHOT EXACTLY) */}
+              {/* PAGINATION UI */}
               {filteredCustomerBills.length > 0 && (
                 <div className="bg-white dark:bg-[#0c1222] rounded-3xl p-4 border border-slate-200/80 dark:border-slate-800/80 flex flex-col items-center gap-3 shadow-sm mt-4">
-                  {/* Showing Text Indicator */}
                   <p className="text-xs font-black text-slate-500 dark:text-slate-400">
                     Showing <span className="text-orange-500 font-extrabold">{filteredCustomerBills.length > 0 ? currentStartRecord + 1 : 0}</span> to <span className="text-orange-500 font-extrabold">{currentEndRecord}</span> of <span className="text-slate-900 dark:text-white font-extrabold">{filteredCustomerBills.length}</span> records
                   </p>
 
-                  {/* Number Buttons Row */}
                   <div className="flex items-center gap-1.5 flex-wrap justify-center">
                     <button
                       onClick={() => setCustomerPage(p => Math.max(p - 1, 1))}

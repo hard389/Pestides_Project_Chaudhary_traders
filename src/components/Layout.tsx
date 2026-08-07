@@ -31,6 +31,7 @@ const navigation = [
   { name: 'Credit Customer', href: '/settings', icon: Settings, color: 'from-blue-500 to-cyan-500' },
   { name: 'Stock View', href: '/fees', icon: Wallet, color: 'from-blue-500 to-cyan-500' },
   { name: 'Analytics', href: '/analytics', icon: PieChart, color: 'from-blue-500 to-cyan-500' },
+  { name: 'Expense & Profit', href: '/quiz', icon: AlertCircle, color: 'from-blue-500 to-cyan-500' },
   { name: 'Alerts And Notification', href: '/alerts', icon: AlertCircle, color: 'from-blue-500 to-cyan-500' },
   
 ];

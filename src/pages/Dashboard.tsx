@@ -488,45 +488,49 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* HEADER BAR */}
-      <div className="w-full bg-white/70 dark:bg-[#070b13]/80 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-800/60 sticky top-0 z-40">
-        <div className="mx-auto max-w-2xl flex h-16 items-center justify-between px-4">
-          <span className="font-black text-xl tracking-tight bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent">
+      {/* MOBILE OPTIMIZED TOP HEADER BAR */}
+      <div className="w-full bg-white/80 dark:bg-[#070b13]/85 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-800/60 sticky top-0 z-40">
+        <div className="mx-auto max-w-2xl flex min-h-[4rem] items-center justify-between px-3 sm:px-4 py-2 sm:py-0 gap-2">
+          
+          {/* LOGO TITLE - NO WRAP ON MOBILE */}
+          <span className="font-black text-base sm:text-xl tracking-tight bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent whitespace-nowrap shrink-0">
             Chaudhary Traders
           </span>
 
-          <div className="flex items-center gap-3">
-            {/* PREMIUM PWA INSTALL BUTTON */}
+          {/* ACTION BUTTONS GROUP */}
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            {/* PWA INSTALL BUTTON */}
             {isInstallable && (
               <button
                 onClick={handleInstallPWA}
-                className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-3 py-1.5 text-white font-extrabold text-xs shadow-[0_0_15px_rgba(249,115,22,0.4)] hover:scale-105 active:scale-95 transition-all"
+                className="flex items-center gap-1 sm:gap-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-2 sm:px-3 py-1.5 text-white font-extrabold text-[11px] sm:text-xs shadow-[0_0_15px_rgba(249,115,22,0.4)] hover:scale-105 active:scale-95 transition-all"
               >
-                <Download className="h-4 w-4" />
+                <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                 <span className="hidden sm:inline">Install App</span>
               </button>
             )}
 
+            {/* DARK / LIGHT TOGGLE */}
             <button
               onClick={() => setIsDark(!isDark)}
-              className="flex h-8 w-14 items-center rounded-full bg-slate-200/80 p-1 dark:bg-slate-800 border border-slate-300/50 dark:border-slate-700/50"
+              className="flex h-7 w-12 sm:h-8 sm:w-14 items-center rounded-full bg-slate-200/80 p-0.5 sm:p-1 dark:bg-slate-800 border border-slate-300/50 dark:border-slate-700/50 shrink-0"
             >
-              <div className={`flex h-6 w-6 items-center justify-center rounded-full bg-white shadow-md transition-transform duration-300 ${isDark ? 'translate-x-6 bg-slate-900 text-yellow-400' : 'text-orange-500'}`}>
-                {isDark ? <Moon className="h-3.5 w-3.5 fill-current" /> : <Sun className="h-3.5 w-3.5 fill-current" />}
+              <div className={`flex h-5 w-5 sm:h-6 sm:w-6 items-center justify-center rounded-full bg-white shadow-md transition-transform duration-300 ${isDark ? 'translate-x-5 sm:translate-x-6 bg-slate-900 text-yellow-400' : 'text-orange-500'}`}>
+                {isDark ? <Moon className="h-3 w-3 sm:h-3.5 sm:w-3.5 fill-current" /> : <Sun className="h-3 w-3 sm:h-3.5 sm:w-3.5 fill-current" />}
               </div>
             </button>
 
-            {/* NOTIFICATION BELL WITH LIVE COUNTER */}
-            <Link to="/alerts" className="relative rounded-2xl p-2 text-slate-500 hover:text-orange-500 dark:text-slate-400 transition-all cursor-pointer">
-              <Bell className="h-5 w-5" />
+            {/* NOTIFICATION BELL */}
+            <Link to="/alerts" className="relative rounded-xl p-1.5 sm:p-2 text-slate-500 hover:text-orange-500 dark:text-slate-400 transition-all cursor-pointer shrink-0">
+              <Bell className="h-4 w-4 sm:h-5 sm:w-5" />
               {notificationCount > 0 ? (
-                <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-white text-[10px] font-bold">
+                <span className="absolute -top-1 -right-1 flex h-4 w-4 sm:h-5 sm:w-5 items-center justify-center rounded-full bg-red-600 text-white text-[9px] sm:text-[10px] font-bold">
                   {notificationCount}
                 </span>
               ) : (
-                <span className="absolute right-1.5 top-1.5 flex h-2.5 w-2.5">
+                <span className="absolute right-1 top-1 flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-orange-500"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
                 </span>
               )}
             </Link>
@@ -534,9 +538,9 @@ export default function Dashboard() {
             {/* LOGOUT BUTTON */}
             <button
               onClick={() => setShowConfirmModal(true)}
-              className="flex items-center gap-2 rounded-xl bg-red-600 px-3 py-1.5 text-white font-bold text-xs hover:bg-red-700 transition-all">
-              <LogOut className="h-4 w-4" />
-              <span>Logout</span>
+              className="flex items-center gap-1 sm:gap-1.5 rounded-xl bg-red-600 px-2 sm:px-3 py-1.5 text-white font-bold text-[11px] sm:text-xs hover:bg-red-700 transition-all shrink-0">
+              <LogOut className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <span className="hidden xs:inline sm:inline">Logout</span>
             </button>
           </div>
         </div>
@@ -813,9 +817,9 @@ export default function Dashboard() {
 
       </main>
 
-      {/* FLOATING BOTTOM NAVIGATION */}
-      <div className="fixed bottom-6 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
-        <nav className="w-full max-w-lg bg-white/95 dark:bg-[#0c1222]/95 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800/80 rounded-full shadow-[0_10px_40px_rgba(0,0,0,0.08)] px-4 py-2.5 flex items-center justify-between pointer-events-auto">
+      {/* MOBILE OPTIMIZED FLOATING BOTTOM NAVIGATION */}
+      <div className="fixed bottom-4 sm:bottom-6 left-0 right-0 z-50 flex justify-center px-2 sm:px-4 pointer-events-none">
+        <nav className="w-full max-w-lg bg-white/95 dark:bg-[#0c1222]/95 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800/80 rounded-full shadow-[0_10px_40px_rgba(0,0,0,0.08)] px-2 sm:px-4 py-2 flex items-center justify-between pointer-events-auto">
           {navigationTabs.map((tab) => {
             const IconComponent = tab.icon;
             const isActive = location.pathname === tab.href;
@@ -824,19 +828,19 @@ export default function Dashboard() {
               <Link
                 key={tab.href}
                 to={tab.href}
-                className="flex flex-col items-center justify-center flex-1 transition-all duration-300"
+                className="flex flex-col items-center justify-center flex-1 transition-all duration-300 px-0.5"
               >
                 {isActive ? (
-                  <div className="h-12 w-12 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-[0_4px_20px_rgba(249,115,22,0.6)] mb-1">
-                    <IconComponent className="h-6 w-6 stroke-[2.2]" />
+                  <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-[0_4px_20px_rgba(249,115,22,0.6)] mb-0.5">
+                    <IconComponent className="h-5 w-5 sm:h-6 sm:w-6 stroke-[2.2]" />
                   </div>
                 ) : (
-                  <div className="h-9 w-9 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
-                    <IconComponent className="h-5 w-5 stroke-[1.8]" />
+                  <div className="h-8 w-8 sm:h-9 sm:w-9 flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">
+                    <IconComponent className="h-4 w-4 sm:h-5 sm:w-5 stroke-[1.8]" />
                   </div>
                 )}
                 
-                <span className={`text-[10px] font-bold tracking-tight transition-all ${
+                <span className={`text-[9px] sm:text-[10px] font-bold tracking-tight whitespace-nowrap leading-none transition-all ${
                   isActive 
                     ? 'text-orange-500 font-extrabold' 
                     : 'text-slate-400 dark:text-slate-500'

@@ -17,6 +17,10 @@ export default defineConfig({
       devOptions: {
         enabled: true,
       },
+      workbox: {
+        // Build crash hone se bachane ke liye Workbox limit 2MB se barha kar 5MB kar di hai
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      },
       manifest: {
         name: "Chaudhary Traders",
         short_name: "Chaudhary Traders",
@@ -46,6 +50,20 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            if (id.includes("firebase")) {
+              return "firebase"; // Firebase bundle ko alag file mein split kar dega
+            }
+            return "vendor";
+          }
+        },
+      },
     },
   },
 });
