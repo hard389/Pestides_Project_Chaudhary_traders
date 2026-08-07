@@ -515,7 +515,7 @@ export default function Dashboard() {
         <div className="mx-auto max-w-2xl flex min-h-[4rem] items-center justify-between px-3 sm:px-4 py-2 sm:py-0 gap-2">
           
          <span className="font-black text-sm sm:text-base tracking-tight bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent whitespace-nowrap shrink-0">
-          Khalil Tahir
+          Chaudhary Traders
           </span>
 
           <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
@@ -571,7 +571,7 @@ export default function Dashboard() {
           <div className="flex items-start justify-between gap-2 sm:gap-4">
             <div className="space-y-1 min-w-0 flex-1">
               <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white leading-tight break-words">
-                Chaudhary Traders
+                Khalil Tahir
               </h1>
               <p className="text-[11px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 leading-snug">
                 Agri-Chemicals, Pesticides & Fertilizer Management System
