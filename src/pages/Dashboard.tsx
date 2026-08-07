@@ -571,7 +571,7 @@ export default function Dashboard() {
           <div className="flex items-start justify-between gap-2 sm:gap-4">
             <div className="space-y-1 min-w-0 flex-1">
               <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white leading-tight break-words">
-                Khalil Tahir
+              Ch Khalil Tahir
               </h1>
               <p className="text-[11px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 leading-snug">
                 Agri-Chemicals, Pesticides & Fertilizer Management System
