@@ -264,24 +264,60 @@ export default function SellProduct() {
     return total;
   }, [monthlySummaries, customerBills]);
 
-  // Frequent Customers
-  const frequentCustomers = useMemo(() => {
+  // Credit Customers & 3+ Order Frequent Customers Calculation Logic
+  const { creditCustomerNames, frequentCustomerNames, candidateCustomers } = useMemo(() => {
     const orderCounts: Record<string, number> = {};
+    const creditSet = new Set<string>();
+    const frequentSet = new Set<string>();
+
     customerBills.forEach(bill => {
       const name = bill.customerName ? bill.customerName.trim() : '';
       if (name) {
         orderCounts[name] = (orderCounts[name] || 0) + 1;
+        // Check if customer has outstanding credit record
+        if (bill.creditAmount && bill.creditAmount > 0) {
+          creditSet.add(name);
+        }
       }
     });
-    return Object.keys(orderCounts).filter(name => orderCounts[name] >= 3);
+
+    Object.keys(orderCounts).forEach(name => {
+      if (orderCounts[name] >= 3) {
+        frequentSet.add(name);
+      }
+    });
+
+    // Combine credit customers and frequent customers (3+ orders)
+    const combinedSet = new Set([...Array.from(creditSet), ...Array.from(frequentSet)]);
+
+    return {
+      creditCustomerNames: creditSet,
+      frequentCustomerNames: frequentSet,
+      candidateCustomers: Array.from(combinedSet)
+    };
   }, [customerBills]);
 
+  // Filter suggestions matching the typed input
   const filteredSuggestions = useMemo(() => {
     if (!customerName.trim()) return [];
-    return frequentCustomers.filter(name =>
-      name.toLowerCase().includes(customerName.toLowerCase().trim())
+    const queryStr = customerName.toLowerCase().trim();
+    return candidateCustomers.filter(name =>
+      name.toLowerCase().includes(queryStr)
     );
-  }, [frequentCustomers, customerName]);
+  }, [candidateCustomers, customerName]);
+
+  // Auto-Select Logic: If customer has purchased 3 or more times and exact name match is entered, auto select
+  useEffect(() => {
+    if (!customerName.trim()) return;
+    const typed = customerName.trim().toLowerCase();
+    const matchFrequent = Array.from(frequentCustomerNames).find(
+      name => name.toLowerCase() === typed
+    );
+    if (matchFrequent && customerName !== matchFrequent) {
+      setCustomerName(matchFrequent);
+      setShowSuggestions(false);
+    }
+  }, [customerName, frequentCustomerNames]);
 
   const handleProductSelect = (productId: string) => {
     setSelectedProductId(productId);
@@ -781,7 +817,7 @@ export default function SellProduct() {
                       <div className="absolute left-0 right-0 top-full mt-1.5 bg-white dark:bg-[#0c1222] border-2 border-orange-500 rounded-2xl shadow-2xl z-50 overflow-hidden">
                         <div className="px-3 py-1.5 bg-orange-500/10 border-b border-orange-500/20 text-[10px] font-black uppercase text-orange-600 dark:text-orange-400 flex items-center justify-between">
                           <span className="flex items-center gap-1">
-                            <Sparkles className="h-3 w-3" /> Frequent Customer Suggestions (3+ Orders)
+                            <Sparkles className="h-3 w-3" /> Customer Suggestions (Credit & 3+ Orders)
                           </span>
                           <button
                             type="button"
@@ -791,20 +827,37 @@ export default function SellProduct() {
                             <X className="h-3 w-3" />
                           </button>
                         </div>
-                        <div className="max-h-40 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
-                          {filteredSuggestions.map((name) => (
-                            <div
-                              key={name}
-                              onClick={() => {
-                                setCustomerName(name);
-                                setShowSuggestions(false);
-                              }}
-                              className="px-4 py-2.5 text-xs font-black text-slate-800 dark:text-slate-100 hover:bg-orange-500 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
-                            >
-                              <span>{name}</span>
-                              <Check className="h-3.5 w-3.5 text-orange-400" />
-                            </div>
-                          ))}
+                        <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                          {filteredSuggestions.map((name) => {
+                            const isCredit = creditCustomerNames.has(name);
+                            const isFrequent = frequentCustomerNames.has(name);
+
+                            return (
+                              <div
+                                key={name}
+                                onClick={() => {
+                                  setCustomerName(name);
+                                  setShowSuggestions(false);
+                                }}
+                                className="px-4 py-2.5 text-xs font-black text-slate-800 dark:text-slate-100 hover:bg-orange-500 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
+                              >
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span>{name}</span>
+                                  {isCredit && (
+                                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30">
+                                      Credit Customer
+                                    </span>
+                                  )}
+                                  {isFrequent && (
+                                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                                      3+ Purchases
+                                    </span>
+                                  )}
+                                </div>
+                                <Check className="h-3.5 w-3.5 text-orange-400 shrink-0" />
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
