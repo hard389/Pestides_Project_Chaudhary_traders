@@ -1,9 +1,13 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
-import { getFirestore, Firestore } from 'firebase/firestore';
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager, 
+  Firestore 
+} from 'firebase/firestore';
 import { getAuth, Auth } from 'firebase/auth';
 
-// Firebase configuration - These are publishable keys (safe to expose in frontend)
-// Users should replace these with their own Firebase project credentials
+// Firebase configuration
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
@@ -28,8 +32,14 @@ if (isFirebaseConfigured) {
   try {
     // Initialize Firebase
     app = initializeApp(firebaseConfig);
-    // Initialize Firestore
-    db = getFirestore(app);
+    
+    // Initialize Firestore with Persistent Cache (Fast Offline/Cache Support)
+    db = initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager()
+      })
+    });
+    
     // Initialize Auth  
     auth = getAuth(app);
   } catch (error) {
