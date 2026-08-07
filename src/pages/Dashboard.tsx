@@ -514,8 +514,8 @@ export default function Dashboard() {
       <div className="w-full bg-white/80 dark:bg-[#070b13]/85 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-800/60 sticky top-0 z-40">
         <div className="mx-auto max-w-2xl flex min-h-[4rem] items-center justify-between px-3 sm:px-4 py-2 sm:py-0 gap-2">
           
-          <span className="font-black text-base sm:text-lg tracking-tight bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent whitespace-nowrap shrink-0">
-            Chaudhary Traders
+         <span className="font-black text-sm sm:text-base tracking-tight bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent whitespace-nowrap shrink-0">
+          Chaudhary Traders
           </span>
 
           <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
