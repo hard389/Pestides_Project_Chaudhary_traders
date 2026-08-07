@@ -128,7 +128,6 @@ export default function Dashboard() {
         setDeferredPrompt(null);
       }
     } else {
-      // If browser event was cancelled/dismissed, show quick manual guide
       setShowInstallGuideModal(true);
     }
   };
@@ -246,7 +245,6 @@ export default function Dashboard() {
     setSelectedDate(newDateStr);
     setCurrentPage(1);
 
-    // Check if sales data exists for selected date
     const hasData = salesData.some((sale) => {
       const sDate = getSaleDateObj(sale);
       return getLocalDateString(sDate) === newDateStr;
@@ -298,12 +296,10 @@ export default function Dashboard() {
       const saleDate = getSaleDateObj(sale);
       const saleDateStr = getLocalDateString(saleDate);
 
-      // Only calculate metrics for sales matching selectedDate
       if (saleDateStr === selectedDate) {
         const grandTotal = Number(sale.grandTotal || sale.totalAmount || sale.amount || 0);
         const paidAmount = Number(sale.paidAmount !== undefined ? sale.paidAmount : grandTotal);
 
-        // Extract Credit directly from Firestore Document
         let saleCredit = 0;
         if (sale.creditAmount !== undefined) {
           saleCredit = Number(sale.creditAmount);
@@ -317,7 +313,6 @@ export default function Dashboard() {
         dayCredit += saleCredit;
         dayNetCash += Math.min(paidAmount, grandTotal);
 
-        // Profit calculation for the day: (Sell Price - Cost Price) * Quantity
         let saleProfit = 0;
 
         if (Array.isArray(sale.items)) {
@@ -380,7 +375,6 @@ export default function Dashboard() {
     { label: 'Notification', icon: Bell, href: '/alerts' },
   ];
 
-  // Quick Access Configuration using identical navbar path routes
   const quickAccessItems = [
     {
       title: 'Add Product',
@@ -452,7 +446,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* BEAUTIFUL "DATA NOT FOUND" NOTIFICATION TOAST */}
+      {/* NOTIFICATION TOAST */}
       {showNotFoundToast && (
         <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[110] bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white font-black text-xs sm:text-sm px-6 py-3.5 rounded-2xl shadow-[0_0_35px_rgba(249,115,22,0.6)] flex items-center gap-3 border border-amber-300 animate-in fade-in slide-in-from-top-4">
           <Info className="h-5 w-5 shrink-0 animate-pulse text-yellow-200" />
@@ -463,7 +457,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* PWA INSTALLATION GUIDE MODAL (IF PROMPT CANCELLED BY BROWSER) */}
+      {/* PWA INSTALLATION GUIDE MODAL */}
       {showInstallGuideModal && (
         <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-[#0c1222] p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 text-center">
@@ -516,18 +510,16 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* MOBILE OPTIMIZED TOP HEADER BAR */}
+      {/* TOP HEADER BAR */}
       <div className="w-full bg-white/80 dark:bg-[#070b13]/85 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-800/60 sticky top-0 z-40">
         <div className="mx-auto max-w-2xl flex min-h-[4rem] items-center justify-between px-3 sm:px-4 py-2 sm:py-0 gap-2">
           
-          {/* LOGO TITLE - NO WRAP ON MOBILE */}
           <span className="font-black text-base sm:text-xl tracking-tight bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent whitespace-nowrap shrink-0">
             Chaudhary Traders
           </span>
 
-          {/* ACTION BUTTONS GROUP */}
           <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-            {/* PERMANENT PWA INSTALL BUTTON IN TOP HEADER */}
+            {/* Top Bar Install Button */}
             <button
               onClick={handleInstallPWA}
               className="flex items-center gap-1 sm:gap-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-2 sm:px-3 py-1.5 text-white font-extrabold text-[11px] sm:text-xs shadow-[0_0_15px_rgba(249,115,22,0.4)] hover:scale-105 active:scale-95 transition-all"
@@ -536,7 +528,7 @@ export default function Dashboard() {
               <span className="hidden sm:inline">Install App</span>
             </button>
 
-            {/* DARK / LIGHT TOGGLE */}
+            {/* Dark/Light Toggle */}
             <button
               onClick={() => setIsDark(!isDark)}
               className="flex h-7 w-12 sm:h-8 sm:w-14 items-center rounded-full bg-slate-200/80 p-0.5 sm:p-1 dark:bg-slate-800 border border-slate-300/50 dark:border-slate-700/50 shrink-0"
@@ -546,7 +538,7 @@ export default function Dashboard() {
               </div>
             </button>
 
-            {/* NOTIFICATION BELL */}
+            {/* Notification */}
             <Link to="/alerts" className="relative rounded-xl p-1.5 sm:p-2 text-slate-500 hover:text-orange-500 dark:text-slate-400 transition-all cursor-pointer shrink-0">
               <Bell className="h-4 w-4 sm:h-5 sm:w-5" />
               {notificationCount > 0 ? (
@@ -561,7 +553,7 @@ export default function Dashboard() {
               )}
             </Link>
 
-            {/* LOGOUT BUTTON */}
+            {/* Logout */}
             <button
               onClick={() => setShowConfirmModal(true)}
               className="flex items-center gap-1 sm:gap-1.5 rounded-xl bg-red-600 px-2 sm:px-3 py-1.5 text-white font-bold text-[11px] sm:text-xs hover:bg-red-700 transition-all shrink-0">
@@ -574,24 +566,24 @@ export default function Dashboard() {
 
       <main className="mx-auto max-w-2xl px-4 py-6 space-y-6">
 
-        {/* HERO TITLE CARD */}
-        <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-amber-50/80 via-white to-orange-50/40 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-6 border-2 border-orange-500/80 shadow-[0_0_30px_rgba(249,115,22,0.25)]">
-          <div className="flex items-start justify-between gap-3">
-            <div className="space-y-1">
-              <h1 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white">
+        {/* HERO TITLE CARD WITH FIXED LAYOUT */}
+        <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-amber-50/80 via-white to-orange-50/40 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-5 sm:p-6 border-2 border-orange-500/80 shadow-[0_0_30px_rgba(249,115,22,0.25)]">
+          <div className="flex items-start justify-between gap-2 sm:gap-4">
+            <div className="space-y-1 min-w-0 flex-1">
+              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white leading-tight break-words">
                 Chaudhary Traders
               </h1>
-              <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
+              <p className="text-[11px] sm:text-xs font-bold text-slate-500 dark:text-slate-400 leading-snug">
                 Agri-Chemicals, Pesticides & Fertilizer Management System
               </p>
             </div>
 
-            {/* PERMANENT PWA INSTALL BADGE IN HERO CARD */}
+            {/* PERFECT UN-CUT INSTALL BUTTON */}
             <button
               onClick={handleInstallPWA}
-              className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 px-3.5 py-2 text-white font-extrabold text-xs shadow-[0_0_20px_rgba(249,115,22,0.5)] hover:scale-105 active:scale-95 transition-all shrink-0"
+              className="flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 px-3 py-2 sm:px-4 sm:py-2.5 text-white font-extrabold text-xs shadow-[0_0_20px_rgba(249,115,22,0.5)] hover:scale-105 active:scale-95 transition-all shrink-0 whitespace-nowrap"
             >
-              <Smartphone className="h-4 w-4" />
+              <Smartphone className="h-4 w-4 shrink-0" />
               <span>Install App</span>
             </button>
           </div>
@@ -646,7 +638,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* FINANCIAL OVERVIEW SECTION WITH CALENDAR DATE FILTER */}
+        {/* FINANCIAL OVERVIEW SECTION */}
         <div className="space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
             <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
@@ -658,7 +650,6 @@ export default function Dashboard() {
               )}
             </span>
 
-            {/* CALENDAR FILTER INPUT (Restricted to 1 Month Back) */}
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 bg-white dark:bg-[#0c1222] border-2 border-orange-500/50 rounded-2xl px-3 py-1.5 shadow-sm hover:border-orange-500 transition-all">
                 <Calendar className="h-4 w-4 text-orange-500 shrink-0" />
@@ -759,7 +750,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* SOLD PRODUCTS FOR SELECTED DATE WITH PAGINATION OF 5 */}
+        {/* SOLD PRODUCTS */}
         <div className="space-y-3 pt-2">
           <div className="flex items-center justify-between px-1">
             <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">
@@ -841,7 +832,7 @@ export default function Dashboard() {
 
       </main>
 
-      {/* MOBILE OPTIMIZED FLOATING BOTTOM NAVIGATION */}
+      {/* BOTTOM NAVIGATION */}
       <div className="fixed bottom-4 sm:bottom-6 left-0 right-0 z-50 flex justify-center px-2 sm:px-4 pointer-events-none">
         <nav className="w-full max-w-lg bg-white/95 dark:bg-[#0c1222]/95 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800/80 rounded-full shadow-[0_10px_40px_rgba(0,0,0,0.08)] px-2 sm:px-4 py-2 flex items-center justify-between pointer-events-auto">
           {navigationTabs.map((tab) => {
