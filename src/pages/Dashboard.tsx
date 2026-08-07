@@ -68,7 +68,7 @@ export default function Dashboard() {
 
   // PWA Install Prompt State
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [isInstallable, setIsInstallable] = useState(false);
+  const [showInstallGuideModal, setShowInstallGuideModal] = useState(false);
 
   // Firestore Data States
   const [loading, setLoading] = useState(true);
@@ -110,7 +110,6 @@ export default function Dashboard() {
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
-      setIsInstallable(true);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -120,14 +119,18 @@ export default function Dashboard() {
     };
   }, []);
 
+  // Updated Permanent Install Handler
   const handleInstallPWA = async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') {
-      setIsInstallable(false);
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+      }
+    } else {
+      // If browser event was cancelled/dismissed, show quick manual guide
+      setShowInstallGuideModal(true);
     }
-    setDeferredPrompt(null);
   };
 
   // Authentication Listener
@@ -460,6 +463,31 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* PWA INSTALLATION GUIDE MODAL (IF PROMPT CANCELLED BY BROWSER) */}
+      {showInstallGuideModal && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-[#0c1222] p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 text-center">
+            <div className="h-12 w-12 rounded-2xl bg-orange-500/10 text-orange-500 flex items-center justify-center mx-auto">
+              <Smartphone className="h-6 w-6" />
+            </div>
+            <h3 className="text-lg font-black text-slate-900 dark:text-white">Install App Instructions</h3>
+            <p className="text-xs font-bold text-slate-500 dark:text-slate-400 leading-relaxed text-left">
+              Browser auto-prompt trigger blocked hai. App install karne ke liye:
+              <br/><br/>
+              1. Browser ke top right <strong>3 Dots (⋮)</strong> / Share button par click karein.
+              <br/>
+              2. <strong>"Add to Home screen"</strong> ya <strong>"Install app"</strong> option select karein.
+            </p>
+            <button
+              onClick={() => setShowInstallGuideModal(false)}
+              className="w-full py-2.5 rounded-xl bg-orange-500 text-white font-extrabold text-xs hover:bg-orange-600 transition-all shadow-md"
+            >
+              Got it!
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* LOGOUT CONFIRMATION MODAL */}
       {showConfirmModal && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -499,16 +527,14 @@ export default function Dashboard() {
 
           {/* ACTION BUTTONS GROUP */}
           <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-            {/* PWA INSTALL BUTTON */}
-            {isInstallable && (
-              <button
-                onClick={handleInstallPWA}
-                className="flex items-center gap-1 sm:gap-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-2 sm:px-3 py-1.5 text-white font-extrabold text-[11px] sm:text-xs shadow-[0_0_15px_rgba(249,115,22,0.4)] hover:scale-105 active:scale-95 transition-all"
-              >
-                <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                <span className="hidden sm:inline">Install App</span>
-              </button>
-            )}
+            {/* PERMANENT PWA INSTALL BUTTON IN TOP HEADER */}
+            <button
+              onClick={handleInstallPWA}
+              className="flex items-center gap-1 sm:gap-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-2 sm:px-3 py-1.5 text-white font-extrabold text-[11px] sm:text-xs shadow-[0_0_15px_rgba(249,115,22,0.4)] hover:scale-105 active:scale-95 transition-all"
+            >
+              <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <span className="hidden sm:inline">Install App</span>
+            </button>
 
             {/* DARK / LIGHT TOGGLE */}
             <button
@@ -560,16 +586,14 @@ export default function Dashboard() {
               </p>
             </div>
 
-            {/* PREMIUM PWA INSTALL BADGE IN HERO CARD */}
-            {isInstallable && (
-              <button
-                onClick={handleInstallPWA}
-                className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 px-3.5 py-2 text-white font-extrabold text-xs shadow-[0_0_20px_rgba(249,115,22,0.5)] hover:scale-105 active:scale-95 transition-all shrink-0"
-              >
-                <Smartphone className="h-4 w-4" />
-                <span>Install App</span>
-              </button>
-            )}
+            {/* PERMANENT PWA INSTALL BADGE IN HERO CARD */}
+            <button
+              onClick={handleInstallPWA}
+              className="flex items-center gap-1.5 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 px-3.5 py-2 text-white font-extrabold text-xs shadow-[0_0_20px_rgba(249,115,22,0.5)] hover:scale-105 active:scale-95 transition-all shrink-0"
+            >
+              <Smartphone className="h-4 w-4" />
+              <span>Install App</span>
+            </button>
           </div>
 
           <div className="mt-5 flex items-center gap-3">
