@@ -490,7 +490,7 @@ export default function SellProduct() {
     } catch (error) {
       console.error("Error committing transaction:", error);
       triggerError("Failed to save transaction. Please check connection.");
-    } font-sans finally {
+    } finally {
       setIsSubmitting(false);
     }
   };
