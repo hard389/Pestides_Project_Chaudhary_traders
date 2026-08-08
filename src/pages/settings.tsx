@@ -184,17 +184,21 @@ export default function CreditCustomers() {
   };
 
   // Grouping Sales per Customer & Filtering STRICTLY ONLY CREDIT CUSTOMERS (Exclude Fully Paid)
+  // Normalizing customer names (case-insensitive & trimmed) so repeat purchases merge into ONE SINGLE CARD
   const customerGroups = useMemo(() => {
     const groupsMap: { [key: string]: CustomerGroup } = {};
     const now = new Date();
 
     salesRecords.forEach((sale) => {
-      const name = sale.customerName.trim();
-      if (!name) return;
+      const rawName = sale.customerName ? sale.customerName.trim() : '';
+      if (!rawName) return;
 
-      if (!groupsMap[name]) {
-        groupsMap[name] = {
-          customerName: name,
+      // Case-insensitive key so variations like "Maqoolb" or "maqoolb" merge into the exact same card
+      const key = rawName.toLowerCase();
+
+      if (!groupsMap[key]) {
+        groupsMap[key] = {
+          customerName: rawName, // Preserves nicely formatted name
           totalCredit: 0,
           totalGrandTotal: 0,
           totalPaidAmount: 0,
@@ -204,9 +208,9 @@ export default function CreditCustomers() {
       }
 
       // Track lifetime records
-      groupsMap[name].allLifetimeOrders.push(sale);
-      groupsMap[name].totalGrandTotal += sale.grandTotal;
-      groupsMap[name].totalPaidAmount += sale.paidAmount;
+      groupsMap[key].allLifetimeOrders.push(sale);
+      groupsMap[key].totalGrandTotal += sale.grandTotal;
+      groupsMap[key].totalPaidAmount += sale.paidAmount;
 
       // Check date filter for active unpaid debts
       let matchesDate = true;
@@ -219,8 +223,8 @@ export default function CreditCustomers() {
 
       // Track active credit orders
       if (sale.creditAmount > 0 && matchesDate) {
-        groupsMap[name].totalCredit += sale.creditAmount;
-        groupsMap[name].orders.push(sale);
+        groupsMap[key].totalCredit += sale.creditAmount;
+        groupsMap[key].orders.push(sale);
       }
     });
 
@@ -768,7 +772,7 @@ export default function CreditCustomers() {
                       <span className="flex items-center gap-1">
                         <History className="h-3.5 w-3.5 text-orange-500" /> Pending Receipts Breakdown
                       </span>
-                      <span>Total Unpaid: Rs. {group.orders.reduce((a,b)=>a+b.grandTotal,0)}</span>
+                      <span>Total Unpaid: Rs. {group.orders.reduce((a,b)=>a+b.creditAmount,0).toLocaleString()}</span>
                     </div>
 
                     <div className="space-y-3">
