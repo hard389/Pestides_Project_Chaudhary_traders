@@ -289,6 +289,8 @@ export default function Dashboard() {
     let dayEstProfit = 0;
     let dayCredit = 0;
     let dayNetCash = 0;
+    let dayNetCashProfit = 0;
+    let dayCreditProfit = 0;
 
     const soldItemsAggregated: { [key: string]: { name: string; category: string; quantity: number; totalAmount: number } } = {};
 
@@ -309,9 +311,11 @@ export default function Dashboard() {
           saleCredit = Math.max(0, grandTotal - paidAmount);
         }
 
+        const netCashAmount = Math.min(paidAmount, grandTotal);
+
         daySales += grandTotal;
         dayCredit += saleCredit;
-        dayNetCash += Math.min(paidAmount, grandTotal);
+        dayNetCash += netCashAmount;
 
         let saleProfit = 0;
 
@@ -345,6 +349,17 @@ export default function Dashboard() {
         }
 
         dayEstProfit += saleProfit;
+
+        // Proportional Net Cash Profit & Credit Profit Calculation
+        if (grandTotal > 0) {
+          const cashRatio = netCashAmount / grandTotal;
+          const creditRatio = saleCredit / grandTotal;
+
+          dayNetCashProfit += saleProfit * cashRatio;
+          dayCreditProfit += saleProfit * creditRatio;
+        } else {
+          dayNetCashProfit += saleProfit;
+        }
       }
     });
 
@@ -355,7 +370,9 @@ export default function Dashboard() {
         totalSales: daySales,
         totalEstProfit: dayEstProfit,
         totalCredit: dayCredit,
-        totalNetCash: dayNetCash
+        totalNetCash: dayNetCash,
+        totalNetCashProfit: Math.round(dayNetCashProfit),
+        totalCreditProfit: Math.round(dayCreditProfit)
       },
       selectedSoldItems: soldList
     };
@@ -730,6 +747,24 @@ export default function Dashboard() {
               </div>
             </div>
 
+            {/* CREDIT PROFIT CARD */}
+            <div className="bg-white dark:bg-[#0c1222] p-5 rounded-[2rem] border-2 border-purple-400/60 shadow-sm flex items-center justify-between">
+              <div className="space-y-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  CREDIT PROFIT
+                </span>
+                <p className="text-2xl font-black text-slate-900 dark:text-white">
+                  Rs. {dashboardMetrics.totalCreditProfit.toLocaleString()}
+                </p>
+                <p className="text-[10px] font-extrabold text-purple-500">
+                  Profit on Udhaar Sales
+                </p>
+              </div>
+              <div className="h-12 w-12 rounded-2xl bg-purple-500/10 text-purple-500 flex items-center justify-center">
+                <TrendingUp className="h-6 w-6 stroke-[2.5]" />
+              </div>
+            </div>
+
             {/* NET CASH CARD */}
             <div className="bg-white dark:bg-[#0c1222] p-5 rounded-[2rem] border-2 border-amber-400/60 shadow-sm flex items-center justify-between">
               <div className="space-y-1">
@@ -745,6 +780,24 @@ export default function Dashboard() {
               </div>
               <div className="h-12 w-12 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center">
                 <Briefcase className="h-6 w-6 stroke-[2.5]" />
+              </div>
+            </div>
+
+            {/* NET CASH PROFIT CARD */}
+            <div className="bg-white dark:bg-[#0c1222] p-5 rounded-[2rem] border-2 border-teal-400/60 shadow-sm flex items-center justify-between">
+              <div className="space-y-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  NET CASH PROFIT
+                </span>
+                <p className="text-2xl font-black text-slate-900 dark:text-white">
+                  Rs. {dashboardMetrics.totalNetCashProfit.toLocaleString()}
+                </p>
+                <p className="text-[10px] font-extrabold text-teal-500">
+                  Profit on In-Hand Cash
+                </p>
+              </div>
+              <div className="h-12 w-12 rounded-2xl bg-teal-500/10 text-teal-500 flex items-center justify-center">
+                <PieChart className="h-6 w-6 stroke-[2.5]" />
               </div>
             </div>
           </div>
