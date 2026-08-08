@@ -41,7 +41,9 @@ import {
   User,
   Package,
   Printer,
-  FileText
+  FileText,
+  Edit,
+  Edit3
 } from 'lucide-react';
 
 // Firebase Configuration
@@ -126,11 +128,22 @@ export default function SellProduct() {
 
   // UI Toast & Modal States
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [successToastMsg, setSuccessToastMsg] = useState('Sale Recorded & Monthly Summaries Saved!');
   const [showErrorToast, setShowErrorToast] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [latestBill, setLatestBill] = useState<CustomerBill | null>(null);
   const [showBillModal, setShowBillModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // EDIT MODAL STATES
+  const [editingBill, setEditingBill] = useState<CustomerBill | null>(null);
+  const [editCustomerName, setEditCustomerName] = useState('');
+  const [editItems, setEditItems] = useState<{ id: string; name: string; quantity: number; price: number; total: number }[]>([]);
+  const [editPaymentType, setEditPaymentType] = useState<'CASH' | 'CREDIT'>('CASH');
+  const [editPaidAmount, setEditPaidAmount] = useState<number | ''>('');
+  const [editSelectedProdId, setEditSelectedProdId] = useState('');
+  const [editProdQty, setEditProdQty] = useState<number | ''>(1);
+  const [editProdPrice, setEditProdPrice] = useState<number | ''>('');
 
   // 1. Authentication Listener
   useEffect(() => {
@@ -317,6 +330,18 @@ export default function SellProduct() {
     }
   }, [customerName, frequentCustomerNames]);
 
+  const triggerSuccess = (msg: string) => {
+    setSuccessToastMsg(msg);
+    setShowSuccessToast(true);
+    setTimeout(() => setShowSuccessToast(false), 3000);
+  };
+
+  const triggerError = (msg: string) => {
+    setErrorMessage(msg);
+    setShowErrorToast(true);
+    setTimeout(() => setShowErrorToast(false), 3500);
+  };
+
   const handleProductSelect = (productId: string) => {
     setSelectedProductId(productId);
     const prod = inventory.find(p => p.id === productId);
@@ -325,12 +350,6 @@ export default function SellProduct() {
     } else {
       setUnitPrice('');
     }
-  };
-
-  const triggerError = (msg: string) => {
-    setErrorMessage(msg);
-    setShowErrorToast(true);
-    setTimeout(() => setShowErrorToast(false), 3500);
   };
 
   const handleAddToCart = () => {
@@ -484,14 +503,139 @@ export default function SellProduct() {
       setPaidAmountInput('');
       setPaymentType('CASH');
 
-      setShowSuccessToast(true);
-      setTimeout(() => setShowSuccessToast(false), 3000);
+      triggerSuccess("Sale Recorded & Monthly Summaries Saved!");
 
     } catch (error) {
       console.error("Error committing transaction:", error);
       triggerError("Failed to save transaction. Please check connection.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // EDIT RECEIPT HANDLERS
+  const handleOpenEditModal = (bill: CustomerBill) => {
+    setEditingBill(bill);
+    setEditCustomerName(bill.customerName);
+    setEditItems(bill.items.map((item, idx) => ({
+      id: `item-${idx}-${Date.now()}`,
+      name: item.name,
+      quantity: item.quantity,
+      price: item.price,
+      total: item.total
+    })));
+    setEditPaymentType(bill.paymentType || 'CASH');
+    setEditPaidAmount(bill.paymentType === 'CREDIT' ? bill.paidAmount : '');
+    setEditSelectedProdId('');
+    setEditProdQty(1);
+    setEditProdPrice('');
+  };
+
+  const handleEditAddProduct = () => {
+    if (!editSelectedProdId) return triggerError("Select a product to add!");
+    if (!editProdQty || Number(editProdQty) <= 0) return triggerError("Enter valid quantity!");
+    if (editProdPrice === '' || Number(editProdPrice) < 0) return triggerError("Enter valid price!");
+
+    const prod = inventory.find(p => p.id === editSelectedProdId);
+    if (!prod) return;
+
+    setEditItems(prev => [
+      ...prev,
+      {
+        id: `edit-prod-${Date.now()}`,
+        name: prod.name,
+        quantity: Number(editProdQty),
+        price: Number(editProdPrice),
+        total: Number(editProdQty) * Number(editProdPrice)
+      }
+    ]);
+
+    setEditSelectedProdId('');
+    setEditProdQty(1);
+    setEditProdPrice('');
+  };
+
+  const handleRemoveEditItem = (id: string) => {
+    setEditItems(prev => prev.filter(item => item.id !== id));
+  };
+
+  const handleUpdateEditItemQtyPrice = (id: string, qty: number, price: number) => {
+    setEditItems(prev => prev.map(item => {
+      if (item.id === id) {
+        const safeQty = Math.max(1, qty);
+        const safePrice = Math.max(0, price);
+        return {
+          ...item,
+          quantity: safeQty,
+          price: safePrice,
+          total: safeQty * safePrice
+        };
+      }
+      return item;
+    }));
+  };
+
+  const editGrandTotal = useMemo(() => {
+    return editItems.reduce((acc, curr) => acc + (curr.quantity * curr.price), 0);
+  }, [editItems]);
+
+  const calculatedEditPayment = useMemo(() => {
+    if (editPaymentType === 'CASH') {
+      return { paid: editGrandTotal, credit: 0 };
+    }
+    const paid = editPaidAmount === '' ? 0 : Math.min(Number(editPaidAmount), editGrandTotal);
+    const credit = Math.max(0, editGrandTotal - paid);
+    return { paid, credit };
+  }, [editPaymentType, editPaidAmount, editGrandTotal]);
+
+  const handleSaveEditBill = async () => {
+    if (!editingBill || !currentUserEmail) return;
+    if (!editCustomerName.trim()) return triggerError("Customer name is required!");
+    if (editItems.length === 0) return triggerError("At least one product is required!");
+
+    setIsSubmitting(true);
+    try {
+      const updatedBill: CustomerBill = {
+        ...editingBill,
+        customerName: editCustomerName.trim(),
+        items: editItems.map(i => ({
+          name: i.name,
+          quantity: i.quantity,
+          price: i.price,
+          total: i.quantity * i.price
+        })),
+        grandTotal: editGrandTotal,
+        paymentType: editPaymentType,
+        paidAmount: calculatedEditPayment.paid,
+        creditAmount: calculatedEditPayment.credit
+      };
+
+      const billRef = doc(db, 'users', currentUserEmail, 'sales', updatedBill.id);
+      await setDoc(billRef, updatedBill, { merge: true });
+
+      setCustomerBills(prev => prev.map(b => b.id === updatedBill.id ? updatedBill : b));
+      setEditingBill(null);
+      triggerSuccess("Receipt Updated Successfully!");
+    } catch (err) {
+      console.error("Error editing bill:", err);
+      triggerError("Failed to edit receipt!");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // DELETE RECEIPT HANDLER
+  const handleDeleteBill = async (billId: string) => {
+    if (!currentUserEmail) return;
+    if (!window.confirm("Are you sure you want to delete this receipt?")) return;
+
+    try {
+      await deleteDoc(doc(db, 'users', currentUserEmail, 'sales', billId));
+      setCustomerBills(prev => prev.filter(b => b.id !== billId));
+      triggerSuccess("Receipt Deleted Successfully!");
+    } catch (err) {
+      console.error("Error deleting bill:", err);
+      triggerError("Failed to delete receipt!");
     }
   };
 
@@ -701,7 +845,7 @@ export default function SellProduct() {
       {showSuccessToast && (
         <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[110] bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-black text-xs sm:text-sm px-6 py-3.5 rounded-2xl shadow-[0_0_30px_rgba(16,185,129,0.6)] flex items-center gap-3 border border-emerald-300">
           <CheckCircle2 className="h-5 w-5 shrink-0 animate-bounce" />
-          <span>Sale Recorded & Monthly Summaries Saved!</span>
+          <span>{successToastMsg}</span>
         </div>
       )}
 
@@ -1171,15 +1315,36 @@ export default function SellProduct() {
 
                       <div className="border-t border-slate-200 dark:border-slate-800 pt-2 flex justify-between items-center text-xs font-black">
                         <span className="text-slate-900 dark:text-white">Total: Rs. {bill.grandTotal}</span>
-                        <button
-                          onClick={() => {
-                            setLatestBill(bill);
-                            setShowBillModal(true);
-                          }}
-                          className="text-xs font-extrabold text-orange-500 hover:underline"
-                        >
-                          View Receipt
-                        </button>
+                        
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => {
+                              setLatestBill(bill);
+                              setShowBillModal(true);
+                            }}
+                            className="text-xs font-extrabold text-orange-500 hover:underline"
+                          >
+                            View Receipt
+                          </button>
+
+                          <button
+                            onClick={() => handleOpenEditModal(bill)}
+                            className="p-1 text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-950/40 rounded-lg transition-colors flex items-center gap-0.5"
+                            title="Edit Receipt"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                            <span className="text-[10px]">Edit</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleDeleteBill(bill.id)}
+                            className="p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors flex items-center gap-0.5"
+                            title="Delete Receipt"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span className="text-[10px]">Delete</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))
@@ -1232,6 +1397,192 @@ export default function SellProduct() {
 
         </div>
       </main>
+
+      {/* EDIT BILL BEAUTIFUL CARD MODAL */}
+      {editingBill && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
+          <div className="bg-white dark:bg-[#0c1222] border-2 border-orange-500/70 rounded-3xl p-5 max-w-lg w-full shadow-2xl space-y-4 my-8">
+            
+            <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-orange-500">
+                <Edit3 className="h-5 w-5" />
+                <h3 className="text-base font-black text-slate-900 dark:text-white">Edit Bill Receipt</h3>
+              </div>
+              <button onClick={() => setEditingBill(null)} className="p-1 text-slate-400 hover:text-orange-500">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+              {/* Customer Name */}
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">
+                  Customer Name
+                </label>
+                <input
+                  type="text"
+                  value={editCustomerName}
+                  onChange={(e) => setEditCustomerName(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 rounded-xl py-2 px-3 text-xs font-bold outline-none focus:border-orange-500"
+                />
+              </div>
+
+              {/* Existing Items in Receipt */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                  Bill Products & Rates
+                </label>
+                {editItems.map((item) => (
+                  <div key={item.id} className="bg-slate-50 dark:bg-[#070b13] p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-black text-slate-800 dark:text-slate-100">{item.name}</span>
+                      <button
+                        onClick={() => handleRemoveEditItem(item.id)}
+                        className="p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg"
+                        title="Remove Product"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 block">Qty</span>
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) => handleUpdateEditItemQtyPrice(item.id, Number(e.target.value), item.price)}
+                          className="w-full bg-white dark:bg-[#0c1222] border border-slate-200 dark:border-slate-800 rounded-lg py-1 px-2 text-xs font-bold"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 block">Rate (Rs.)</span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={item.price}
+                          onChange={(e) => handleUpdateEditItemQtyPrice(item.id, item.quantity, Number(e.target.value))}
+                          className="w-full bg-white dark:bg-[#0c1222] border border-slate-200 dark:border-slate-800 rounded-lg py-1 px-2 text-xs font-bold"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add New Product into Bill */}
+              <div className="bg-slate-50 dark:bg-[#070b13] p-3 rounded-xl border border-dashed border-orange-500/40 space-y-2">
+                <span className="text-[10px] font-black uppercase text-orange-500 block">+ Add More Product To Bill</span>
+                <select
+                  value={editSelectedProdId}
+                  onChange={(e) => {
+                    setEditSelectedProdId(e.target.value);
+                    const prod = inventory.find(p => p.id === e.target.value);
+                    if (prod) setEditProdPrice(prod.price);
+                  }}
+                  className="w-full bg-white dark:bg-[#0c1222] border border-slate-200 dark:border-slate-800 rounded-xl py-1.5 px-2 text-xs font-bold"
+                >
+                  <option value="">-- Choose Pesticide --</option>
+                  {inventory.map((prod) => (
+                    <option key={prod.id} value={prod.id}>{prod.name} - Rs. {prod.price}</option>
+                  ))}
+                </select>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    placeholder="Qty"
+                    value={editProdQty}
+                    onChange={(e) => setEditProdQty(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="bg-white dark:bg-[#0c1222] border border-slate-200 dark:border-slate-800 rounded-xl py-1.5 px-2 text-xs font-bold"
+                  />
+                  <input
+                    type="number"
+                    placeholder="Price"
+                    value={editProdPrice}
+                    onChange={(e) => setEditProdPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="bg-white dark:bg-[#0c1222] border border-slate-200 dark:border-slate-800 rounded-xl py-1.5 px-2 text-xs font-bold"
+                  />
+                </div>
+
+                <button
+                  onClick={handleEditAddProduct}
+                  className="w-full py-2 bg-orange-500 text-white rounded-xl text-xs font-black uppercase"
+                >
+                  Add Item
+                </button>
+              </div>
+
+              {/* Payment Type Edit */}
+              <div className="space-y-2 pt-2">
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                  Payment Setup
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditPaymentType('CASH')}
+                    className={`py-2 rounded-xl text-xs font-black border-2 ${
+                      editPaymentType === 'CASH' ? 'bg-orange-500 text-white border-orange-500' : 'bg-slate-50 dark:bg-[#070b13] border-slate-200 dark:border-slate-800'
+                    }`}
+                  >
+                    CASH
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditPaymentType('CREDIT')}
+                    className={`py-2 rounded-xl text-xs font-black border-2 ${
+                      editPaymentType === 'CREDIT' ? 'bg-orange-500 text-white border-orange-500' : 'bg-slate-50 dark:bg-[#070b13] border-slate-200 dark:border-slate-800'
+                    }`}
+                  >
+                    CREDIT
+                  </button>
+                </div>
+
+                {editPaymentType === 'CREDIT' && (
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-amber-500 block">Paid Amount</span>
+                    <input
+                      type="number"
+                      value={editPaidAmount}
+                      onChange={(e) => setEditPaidAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full bg-slate-50 dark:bg-[#070b13] border border-amber-500/50 rounded-xl py-2 px-3 text-xs font-bold"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Totals Summary */}
+              <div className="bg-slate-50 dark:bg-[#070b13] p-3 rounded-xl space-y-1 text-xs font-black border border-slate-200 dark:border-slate-800">
+                <div className="flex justify-between">
+                  <span>Grand Total:</span>
+                  <span>Rs. {editGrandTotal}</span>
+                </div>
+                <div className="flex justify-between text-emerald-500">
+                  <span>Paid:</span>
+                  <span>Rs. {calculatedEditPayment.paid}</span>
+                </div>
+                <div className="flex justify-between text-rose-500">
+                  <span>Credit:</span>
+                  <span>Rs. {calculatedEditPayment.credit}</span>
+                </div>
+              </div>
+
+            </div>
+
+            <button
+              onClick={handleSaveEditBill}
+              disabled={isSubmitting}
+              className="w-full py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg hover:scale-[1.01] transition-all flex items-center justify-center gap-2"
+            >
+              <Save className="h-4 w-4" />
+              {isSubmitting ? "Updating Bill..." : "Save Receipt Changes"}
+            </button>
+
+          </div>
+        </div>
+      )}
 
       {/* INVOICE RANGE SELECTOR MODAL */}
       {showInvoiceModal && (
