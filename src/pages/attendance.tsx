@@ -44,7 +44,8 @@ import {
   FileText,
   Edit,
   Edit3,
-  Layers
+  Layers,
+  Calendar
 } from 'lucide-react';
 
 // Firebase Configuration
@@ -129,7 +130,10 @@ export default function SellProduct() {
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   
   // Date Filters
-  const [dateFilterRange, setDateFilterRange] = useState<'today' | '3days' | 'week' | '15days' | 'month'>('today');
+  const [dateFilterRange, setDateFilterRange] = useState<'today' | '3days' | 'week' | '15days' | 'month' | 'custom'>('today');
+  const [startDateFilter, setStartDateFilter] = useState('');
+  const [endDateFilter, setEndDateFilter] = useState('');
+  const [showCustomDatePicker, setShowCustomDatePicker] = useState(false);
   const [customerPage, setCustomerPage] = useState(1);
 
   // Invoice Generator Modal States
@@ -154,9 +158,8 @@ export default function SellProduct() {
   const [editItems, setEditItems] = useState<{ id: string; name: string; quantity: number; price: number; total: number }[]>([]);
   const [editPaymentType, setEditPaymentType] = useState<'CASH' | 'CREDIT'>('CASH');
   const [editPaidAmount, setEditPaidAmount] = useState<number | ''>('');
-  const [editSelectedProdId, setEditSelectedProdId] = useState('');
-  const [editProdQty, setEditProdQty] = useState<number | ''>(1);
-  const [editProdPrice, setEditProdPrice] = useState<number | ''>('');
+  const [editShowProductModal, setEditShowProductModal] = useState(false);
+  const [editProductSearchQuery, setEditProductSearchQuery] = useState('');
 
   // 1. Authentication Listener
   useEffect(() => {
@@ -371,6 +374,13 @@ export default function SellProduct() {
     const q = productSearchQuery.toLowerCase().trim();
     return inventory.filter(p => p.name.toLowerCase().includes(q));
   }, [inventory, productSearchQuery]);
+
+  // Filter products inside Edit Modal selector
+  const filteredEditModalProducts = useMemo(() => {
+    if (!editProductSearchQuery.trim()) return inventory;
+    const q = editProductSearchQuery.toLowerCase().trim();
+    return inventory.filter(p => p.name.toLowerCase().includes(q));
+  }, [inventory, editProductSearchQuery]);
 
   // Modal OK Button Action
   const handleConfirmProductModalSelection = () => {
@@ -595,33 +605,27 @@ export default function SellProduct() {
     })));
     setEditPaymentType(bill.paymentType || 'CASH');
     setEditPaidAmount(bill.paymentType === 'CREDIT' ? bill.paidAmount : '');
-    setEditSelectedProdId('');
-    setEditProdQty(1);
-    setEditProdPrice('');
   };
 
-  const handleEditAddProduct = () => {
-    if (!editSelectedProdId) return triggerError("Select a product to add!");
-    if (!editProdQty || Number(editProdQty) <= 0) return triggerError("Enter valid quantity!");
-    if (editProdPrice === '' || Number(editProdPrice) < 0) return triggerError("Enter valid price!");
-
-    const prod = inventory.find(p => p.id === editSelectedProdId);
-    if (!prod) return;
-
-    setEditItems(prev => [
-      ...prev,
-      {
-        id: `edit-prod-${Date.now()}`,
-        name: prod.name,
-        quantity: Number(editProdQty),
-        price: Number(editProdPrice),
-        total: Number(editProdQty) * Number(editProdPrice)
+  const handleEditAddProductById = (prod: any) => {
+    setEditItems(prev => {
+      const existing = prev.find(i => i.name === prod.name);
+      if (existing) {
+        return prev.map(i => i.name === prod.name ? { ...i, quantity: i.quantity + 1, total: (i.quantity + 1) * i.price } : i);
       }
-    ]);
-
-    setEditSelectedProdId('');
-    setEditProdQty(1);
-    setEditProdPrice('');
+      return [
+        ...prev,
+        {
+          id: `edit-prod-${Date.now()}-${Math.random()}`,
+          name: prod.name,
+          quantity: 1,
+          price: prod.price || 0,
+          total: prod.price || 0
+        }
+      ];
+    });
+    setEditShowProductModal(false);
+    triggerSuccess(`Added ${prod.name} to Edit Card!`);
   };
 
   const handleRemoveEditItem = (id: string) => {
@@ -732,11 +736,22 @@ export default function SellProduct() {
         matchesDate = diffDays <= 15;
       } else if (dateFilterRange === 'month') {
         matchesDate = billDate.getMonth() === now.getMonth() && billDate.getFullYear() === now.getFullYear();
+      } else if (dateFilterRange === 'custom') {
+        if (startDateFilter) {
+          const s = new Date(startDateFilter);
+          s.setHours(0,0,0,0);
+          if (billDate < s) matchesDate = false;
+        }
+        if (endDateFilter) {
+          const e = new Date(endDateFilter);
+          e.setHours(23,59,59,999);
+          if (billDate > e) matchesDate = false;
+        }
       }
 
       return matchesName && matchesDate;
     });
-  }, [customerBills, customerSearchQuery, dateFilterRange]);
+  }, [customerBills, customerSearchQuery, dateFilterRange, startDateFilter, endDateFilter]);
 
   // Strict Pagination of 7 Records per Page
   const totalCustomerPages = Math.ceil(filteredCustomerBills.length / CUSTOMERS_PER_PAGE) || 1;
@@ -749,7 +764,7 @@ export default function SellProduct() {
 
   useEffect(() => {
     setCustomerPage(1);
-  }, [customerSearchQuery, dateFilterRange]);
+  }, [customerSearchQuery, dateFilterRange, startDateFilter, endDateFilter]);
 
   // Invoice Generation Logic
   const handleGenerateInvoiceRange = (range: 'today' | '3days' | 'week' | '15days' | 'month') => {
@@ -1367,8 +1382,8 @@ export default function SellProduct() {
                   />
                 </div>
 
-                {/* Quick Date Range Selectors */}
-                <div className="flex flex-wrap gap-1.5">
+                {/* Quick Date Range Selectors with Cylinder Date Picker */}
+                <div className="flex flex-wrap items-center gap-1.5">
                   {[
                     { id: 'today', label: 'Today Only' },
                     { id: '3days', label: '3 Days' },
@@ -1379,7 +1394,10 @@ export default function SellProduct() {
                     <button
                       key={btn.id}
                       type="button"
-                      onClick={() => setDateFilterRange(btn.id as any)}
+                      onClick={() => {
+                        setDateFilterRange(btn.id as any);
+                        setShowCustomDatePicker(false);
+                      }}
                       className={`px-3 py-1.5 rounded-full text-[10px] font-extrabold transition-all border ${
                         dateFilterRange === btn.id
                           ? 'bg-orange-500 text-white border-orange-500 shadow-md'
@@ -1389,10 +1407,56 @@ export default function SellProduct() {
                       {btn.label}
                     </button>
                   ))}
+
+                  {/* CYLINDER DATE PICKER TOGGLE BUTTON */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDateFilterRange('custom');
+                      setShowCustomDatePicker(!showCustomDatePicker);
+                    }}
+                    className={`h-8 w-8 rounded-full border flex items-center justify-center transition-all ${
+                      dateFilterRange === 'custom'
+                        ? 'bg-orange-500 text-white border-orange-500 shadow-md'
+                        : 'bg-slate-50 dark:bg-[#070b13] border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:border-orange-400'
+                    }`}
+                    title="Select Date Range"
+                  >
+                    <Calendar className="h-4 w-4" />
+                  </button>
                 </div>
+
+                {/* EXPANDABLE DATE RANGE CYLINDER PICKER INPUTS */}
+                {(showCustomDatePicker || dateFilterRange === 'custom') && (
+                  <div className="bg-amber-500/10 p-3 rounded-2xl border border-orange-500/30 space-y-2 animate-fadeIn">
+                    <span className="text-[10px] font-black uppercase text-orange-600 dark:text-orange-400 block">
+                      Custom Sales History Date Range
+                    </span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 block">From Date</span>
+                        <input
+                          type="date"
+                          value={startDateFilter}
+                          onChange={(e) => setStartDateFilter(e.target.value)}
+                          className="w-full bg-white dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 rounded-xl py-1 px-2 text-xs font-bold"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-bold text-slate-400 block">To Date</span>
+                        <input
+                          type="date"
+                          value={endDateFilter}
+                          onChange={(e) => setEndDateFilter(e.target.value)}
+                          className="w-full bg-white dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 rounded-xl py-1 px-2 text-xs font-bold"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* GLOWING ANIMATED CUSTOMER CARDS LIST (Class Select Inspired Style) */}
+              {/* GLOWING ANIMATED CUSTOMER CARDS LIST */}
               <div className="space-y-3">
                 {paginatedCustomerBills.length === 0 ? (
                   <div className="text-center py-8 bg-slate-50 dark:bg-[#070b13] rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
@@ -1520,12 +1584,11 @@ export default function SellProduct() {
         </div>
       </main>
 
-      {/* PRODUCT SELECTOR MODAL (EXACT SELECT CLASS CARD MATCHING DESIGN) */}
+      {/* MAIN PRODUCT SELECTOR MODAL */}
       {showProductModal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
           <div className="bg-[#f8fafc] dark:bg-[#070b13] border-2 border-orange-500/90 rounded-[32px] p-5 sm:p-6 max-w-md w-full shadow-[0_0_35px_rgba(249,115,22,0.35)] space-y-4 my-auto relative">
             
-            {/* Header */}
             <div className="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-slate-800/80">
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-2xl bg-orange-500 text-white flex items-center justify-center shadow-md shrink-0">
@@ -1549,7 +1612,6 @@ export default function SellProduct() {
               </button>
             </div>
 
-            {/* Filter Input */}
             <div className="relative">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-orange-500" />
               <input
@@ -1561,7 +1623,6 @@ export default function SellProduct() {
               />
             </div>
 
-            {/* Products Selection List Cards */}
             <div className="max-h-[50vh] overflow-y-auto space-y-3 pr-1">
               {filteredModalProducts.length === 0 ? (
                 <div className="text-center py-8 bg-white dark:bg-[#0c1222] rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
@@ -1621,7 +1682,6 @@ export default function SellProduct() {
               )}
             </div>
 
-            {/* OK Button */}
             <div className="pt-2">
               <button
                 type="button"
@@ -1630,6 +1690,84 @@ export default function SellProduct() {
               >
                 <Check className="h-4 w-4 stroke-[3]" /> OK
               </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* EDIT MODAL PRODUCT SELECTOR (EXACT SAME PRODUCT CARD STYLING) */}
+      {editShowProductModal && (
+        <div className="fixed inset-0 z-[230] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-[#f8fafc] dark:bg-[#070b13] border-2 border-orange-500/90 rounded-[32px] p-5 sm:p-6 max-w-md w-full shadow-[0_0_35px_rgba(249,115,22,0.35)] space-y-4 my-auto relative">
+            
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-slate-800/80">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-2xl bg-orange-500 text-white flex items-center justify-center shadow-md shrink-0">
+                  <Package className="h-5 w-5 stroke-[2.2]" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white leading-tight">
+                    Add Product to Receipt
+                  </h3>
+                  <p className="text-[11px] font-bold text-slate-400">
+                    Select a product card to add ({filteredEditModalProducts.length} Available)
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setEditShowProductModal(false)}
+                className="h-8 w-8 rounded-full bg-slate-100 dark:bg-slate-800/80 text-slate-400 hover:text-orange-500 flex items-center justify-center transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-orange-500" />
+              <input
+                type="text"
+                placeholder="Search pesticide to add..."
+                value={editProductSearchQuery}
+                onChange={(e) => setEditProductSearchQuery(e.target.value)}
+                className="w-full bg-white dark:bg-[#0c1222] border-2 border-orange-500/30 rounded-2xl py-2.5 pl-10 pr-4 text-xs font-bold text-slate-800 dark:text-slate-100 outline-none focus:border-orange-500 transition-colors shadow-sm"
+              />
+            </div>
+
+            <div className="max-h-[50vh] overflow-y-auto space-y-3 pr-1">
+              {filteredEditModalProducts.length === 0 ? (
+                <div className="text-center py-8 bg-white dark:bg-[#0c1222] rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
+                  <p className="text-xs font-bold text-slate-400">No products found.</p>
+                </div>
+              ) : (
+                filteredEditModalProducts.map((prod) => (
+                  <div
+                    key={prod.id}
+                    onClick={() => handleEditAddProductById(prod)}
+                    className="relative overflow-hidden p-4 rounded-3xl border-2 bg-white dark:bg-[#0c1222] border-slate-200/80 dark:border-slate-800/80 hover:border-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.1)] hover:shadow-[0_0_20px_rgba(249,115,22,0.3)] transition-all duration-200 cursor-pointer flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="h-6 w-6 rounded-full bg-orange-500/10 border border-orange-500 text-orange-500 flex items-center justify-center shrink-0">
+                        <Plus className="h-3.5 w-3.5 stroke-[3]" />
+                      </div>
+
+                      <div>
+                        <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white leading-tight">
+                          {prod.name}
+                        </h4>
+                        <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mt-0.5">
+                          Stock: {prod.stock} units
+                        </span>
+                      </div>
+                    </div>
+
+                    <span className="text-xs font-black px-3 py-1 rounded-full bg-orange-500 text-white shadow-sm shrink-0">
+                      Rs. {prod.price}
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
 
           </div>
@@ -1700,9 +1838,22 @@ export default function SellProduct() {
 
               {/* Existing Items in Receipt */}
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-                  Bill Products & Rates
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                    Bill Products & Rates
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditProductSearchQuery('');
+                      setEditShowProductModal(true);
+                    }}
+                    className="text-[10px] font-black uppercase text-orange-500 hover:underline flex items-center gap-1"
+                  >
+                    <Plus className="h-3 w-3" /> Add Product Card
+                  </button>
+                </div>
+
                 {editItems.map((item) => (
                   <div key={item.id} className="bg-slate-50 dark:bg-[#070b13] p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
                     <div className="flex justify-between items-center">
@@ -1740,49 +1891,6 @@ export default function SellProduct() {
                     </div>
                   </div>
                 ))}
-              </div>
-
-              {/* Add New Product into Bill */}
-              <div className="bg-slate-50 dark:bg-[#070b13] p-3 rounded-xl border border-dashed border-orange-500/40 space-y-2">
-                <span className="text-[10px] font-black uppercase text-orange-500 block">+ Add More Product To Bill</span>
-                <select
-                  value={editSelectedProdId}
-                  onChange={(e) => {
-                    setEditSelectedProdId(e.target.value);
-                    const prod = inventory.find(p => p.id === e.target.value);
-                    if (prod) setEditProdPrice(prod.price);
-                  }}
-                  className="w-full bg-white dark:bg-[#0c1222] border border-slate-200 dark:border-slate-800 rounded-xl py-1.5 px-2 text-xs font-bold"
-                >
-                  <option value="">-- Choose Pesticide --</option>
-                  {inventory.map((prod) => (
-                    <option key={prod.id} value={prod.id}>{prod.name} - Rs. {prod.price}</option>
-                  ))}
-                </select>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="number"
-                    placeholder="Qty"
-                    value={editProdQty}
-                    onChange={(e) => setEditProdQty(e.target.value === '' ? '' : Number(e.target.value))}
-                    className="bg-white dark:bg-[#0c1222] border border-slate-200 dark:border-slate-800 rounded-xl py-1.5 px-2 text-xs font-bold"
-                  />
-                  <input
-                    type="number"
-                    placeholder="Price"
-                    value={editProdPrice}
-                    onChange={(e) => setEditProdPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                    className="bg-white dark:bg-[#0c1222] border border-slate-200 dark:border-slate-800 rounded-xl py-1.5 px-2 text-xs font-bold"
-                  />
-                </div>
-
-                <button
-                  onClick={handleEditAddProduct}
-                  className="w-full py-2 bg-orange-500 text-white rounded-xl text-xs font-black uppercase"
-                >
-                  Add Item
-                </button>
               </div>
 
               {/* Payment Type Edit */}
