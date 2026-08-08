@@ -43,7 +43,8 @@ import {
   Printer,
   FileText,
   Edit,
-  Edit3
+  Edit3,
+  Layers
 } from 'lucide-react';
 
 // Firebase Configuration
@@ -61,8 +62,8 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-// Strict Page Limit of 5 Records per Page
-const CUSTOMERS_PER_PAGE = 5;
+// Strict Page Limit of 7 Records per Page
+const CUSTOMERS_PER_PAGE = 7;
 
 interface CartItem {
   id: string;
@@ -102,6 +103,15 @@ export default function SellProduct() {
   // Form Input States
   const [customerName, setCustomerName] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Selector Modes & Product Selection States
+  const [selectionMode, setSelectionMode] = useState<'single' | 'multiple'>('single');
+  const [showProductModal, setShowProductModal] = useState(false);
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [tempSingleSelectedId, setTempSingleSelectedId] = useState<string>('');
+  const [tempMultiSelectedIds, setTempMultiSelectedIds] = useState<string[]>([]);
+
+  // Individual Form Add Item Input States
   const [selectedProductId, setSelectedProductId] = useState('');
   const [quantity, setQuantity] = useState<number | ''>(1);
   const [unitPrice, setUnitPrice] = useState<number | ''>('');
@@ -134,6 +144,9 @@ export default function SellProduct() {
   const [latestBill, setLatestBill] = useState<CustomerBill | null>(null);
   const [showBillModal, setShowBillModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // DELETE CONFIRMATION MODAL STATE
+  const [deletingBillId, setDeletingBillId] = useState<string | null>(null);
 
   // EDIT MODAL STATES
   const [editingBill, setEditingBill] = useState<CustomerBill | null>(null);
@@ -349,6 +362,62 @@ export default function SellProduct() {
       setUnitPrice(prod.price || 0);
     } else {
       setUnitPrice('');
+    }
+  };
+
+  // Filter products inside selector modal
+  const filteredModalProducts = useMemo(() => {
+    if (!productSearchQuery.trim()) return inventory;
+    const q = productSearchQuery.toLowerCase().trim();
+    return inventory.filter(p => p.name.toLowerCase().includes(q));
+  }, [inventory, productSearchQuery]);
+
+  // Modal OK Button Action
+  const handleConfirmProductModalSelection = () => {
+    if (selectionMode === 'single') {
+      if (!tempSingleSelectedId) {
+        return triggerError("Please select a product!");
+      }
+      handleProductSelect(tempSingleSelectedId);
+      setShowProductModal(false);
+    } else {
+      if (tempMultiSelectedIds.length === 0) {
+        return triggerError("Please select at least one product!");
+      }
+
+      let addedCount = 0;
+      setCartItems(prev => {
+        const updatedCart = [...prev];
+        tempMultiSelectedIds.forEach(id => {
+          const prod = inventory.find(p => p.id === id);
+          if (prod) {
+            const existingIndex = updatedCart.findIndex(i => i.id === prod.id);
+            if (existingIndex > -1) {
+              const newQty = updatedCart[existingIndex].quantity + 1;
+              if (newQty <= prod.stock) {
+                updatedCart[existingIndex].quantity = newQty;
+                addedCount++;
+              }
+            } else {
+              if (prod.stock >= 1) {
+                updatedCart.push({
+                  id: prod.id,
+                  name: prod.name || 'Pesticide Product',
+                  quantity: 1,
+                  price: prod.price || 0,
+                  availableStock: prod.stock
+                });
+                addedCount++;
+              }
+            }
+          }
+        });
+        return updatedCart;
+      });
+
+      setShowProductModal(false);
+      setTempMultiSelectedIds([]);
+      triggerSuccess(`Added ${addedCount} product(s) to card! Set quantity or price as needed.`);
     }
   };
 
@@ -624,14 +693,14 @@ export default function SellProduct() {
     }
   };
 
-  // DELETE RECEIPT HANDLER
-  const handleDeleteBill = async (billId: string) => {
-    if (!currentUserEmail) return;
-    if (!window.confirm("Are you sure you want to delete this receipt?")) return;
+  // CONFIRMED DELETE RECEIPT HANDLER
+  const handleConfirmDeleteBill = async () => {
+    if (!currentUserEmail || !deletingBillId) return;
 
     try {
-      await deleteDoc(doc(db, 'users', currentUserEmail, 'sales', billId));
-      setCustomerBills(prev => prev.filter(b => b.id !== billId));
+      await deleteDoc(doc(db, 'users', currentUserEmail, 'sales', deletingBillId));
+      setCustomerBills(prev => prev.filter(b => b.id !== deletingBillId));
+      setDeletingBillId(null);
       triggerSuccess("Receipt Deleted Successfully!");
     } catch (err) {
       console.error("Error deleting bill:", err);
@@ -669,7 +738,7 @@ export default function SellProduct() {
     });
   }, [customerBills, customerSearchQuery, dateFilterRange]);
 
-  // Strict Pagination of 5 Records per Page
+  // Strict Pagination of 7 Records per Page
   const totalCustomerPages = Math.ceil(filteredCustomerBills.length / CUSTOMERS_PER_PAGE) || 1;
   const currentStartRecord = (customerPage - 1) * CUSTOMERS_PER_PAGE;
   const currentEndRecord = Math.min(currentStartRecord + CUSTOMERS_PER_PAGE, filteredCustomerBills.length);
@@ -832,7 +901,7 @@ export default function SellProduct() {
       
       {/* ERROR TOAST */}
       {showErrorToast && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[110] bg-rose-600 text-white font-extrabold text-xs sm:text-sm px-5 py-3 rounded-2xl shadow-[0_0_30px_rgba(225,19,72,0.5)] flex items-center gap-3 border border-rose-400">
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[110] bg-rose-600 text-white font-extrabold text-xs sm:text-sm px-5 py-3 rounded-2xl shadow-[0_0_30px_rgba(225,19,72,0.5)] flex items-center gap-3 border border-rose-400 animate-bounce">
           <AlertTriangle className="h-5 w-5 shrink-0" />
           <span>{errorMessage}</span>
           <button onClick={() => setShowErrorToast(false)} className="ml-2 hover:opacity-80">
@@ -889,8 +958,8 @@ export default function SellProduct() {
 
       <main className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8 space-y-6">
         
-        {/* MOBILE RESPONSIVE HERO CARD */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-amber-50/90 via-white to-orange-50/50 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-5 sm:p-7 border-2 border-orange-500/80 shadow-md">
+        {/* MOBILE RESPONSIVE HERO CARD WITH GLOWING ACCENT */}
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-amber-50/90 via-white to-orange-50/50 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-5 sm:p-7 border-2 border-orange-500/80 shadow-[0_0_25px_rgba(249,115,22,0.25)]">
           <div className="flex flex-col gap-5 relative z-10">
             <div className="space-y-2">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/30">
@@ -937,6 +1006,48 @@ export default function SellProduct() {
                 <span>1. Enter Details</span>
               </h2>
 
+              {/* SINGLE PRODUCT OR MULTIPLE PRODUCTS SELECTION MODE SWITCHER */}
+              <div className="bg-slate-50 dark:bg-[#070b13] p-2 rounded-2xl border border-slate-200/80 dark:border-slate-800/60 space-y-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block px-1">
+                  Product Selection Mode
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectionMode('single');
+                      setTempSingleSelectedId(selectedProductId);
+                      setShowProductModal(true);
+                    }}
+                    className={`py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all border-2 ${
+                      selectionMode === 'single'
+                        ? 'bg-orange-500 text-white border-orange-500 shadow-md'
+                        : 'bg-white dark:bg-[#0c1222] border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    <Package className="h-3.5 w-3.5" />
+                    <span>One Product</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectionMode('multiple');
+                      setTempMultiSelectedIds([]);
+                      setShowProductModal(true);
+                    }}
+                    className={`py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all border-2 ${
+                      selectionMode === 'multiple'
+                        ? 'bg-orange-500 text-white border-orange-500 shadow-md'
+                        : 'bg-white dark:bg-[#0c1222] border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    <Layers className="h-3.5 w-3.5" />
+                    <span>Multiple Products</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="space-y-4">
                 {/* Customer Name */}
                 <div>
@@ -954,14 +1065,14 @@ export default function SellProduct() {
                         setShowSuggestions(true);
                       }}
                       onFocus={() => setShowSuggestions(true)}
-                      className="w-full bg-slate-50 dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 rounded-2xl py-3 pl-10 pr-4 text-xs font-extrabold text-slate-800 dark:text-slate-100 outline-none focus:border-orange-500"
+                      className="w-full bg-slate-50 dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 rounded-2xl py-3 pl-10 pr-4 text-xs font-extrabold text-slate-800 dark:text-slate-100 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
                     />
 
                     {showSuggestions && filteredSuggestions.length > 0 && (
-                      <div className="absolute left-0 right-0 top-full mt-1.5 bg-white dark:bg-[#0c1222] border-2 border-orange-500 rounded-2xl shadow-2xl z-50 overflow-hidden">
+                      <div className="absolute left-0 right-0 top-full mt-1.5 bg-white dark:bg-[#0c1222] border-2 border-orange-500/80 rounded-2xl shadow-[0_10px_25px_rgba(249,115,22,0.2)] z-50 overflow-hidden">
                         <div className="px-3 py-1.5 bg-orange-500/10 border-b border-orange-500/20 text-[10px] font-black uppercase text-orange-600 dark:text-orange-400 flex items-center justify-between">
                           <span className="flex items-center gap-1">
-                            <Sparkles className="h-3 w-3" /> Customer Suggestions
+                            <Sparkles className="h-3 w-3" /> Credit & Frequent Customer Suggestions
                           </span>
                           <button
                             type="button"
@@ -983,17 +1094,17 @@ export default function SellProduct() {
                                   setCustomerName(name);
                                   setShowSuggestions(false);
                                 }}
-                                className="px-4 py-2.5 text-xs font-black text-slate-800 dark:text-slate-100 hover:bg-orange-500 hover:text-white transition-colors cursor-pointer flex items-center justify-between"
+                                className="px-4 py-2.5 text-xs font-black text-slate-800 dark:text-slate-100 hover:bg-orange-500 hover:text-white transition-all cursor-pointer flex items-center justify-between"
                               >
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span>{name}</span>
                                   {isCredit && (
-                                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30">
-                                      Credit
+                                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 font-extrabold">
+                                      Credit / Udhaar
                                     </span>
                                   )}
                                   {isFrequent && (
-                                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-extrabold">
                                       3+ Sales
                                     </span>
                                   )}
@@ -1008,25 +1119,30 @@ export default function SellProduct() {
                   </div>
                 </div>
 
-                {/* Select Product */}
+                {/* Select Product Dropdown / Trigger */}
                 <div>
                   <label className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-1.5">
-                    Select Pesticide Product
+                    SELECT PESTICIDE PRODUCT
                   </label>
-                  <div className="relative">
-                    <select
-                      value={selectedProductId}
-                      onChange={(e) => handleProductSelect(e.target.value)}
-                      className="w-full appearance-none bg-slate-50 dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 rounded-2xl py-3 px-4 pr-10 text-xs font-extrabold text-slate-800 dark:text-slate-100 outline-none focus:border-orange-500 cursor-pointer truncate"
-                    >
-                      <option value="" className="bg-white dark:bg-[#070b13] text-slate-800 dark:text-slate-100">-- Choose Pesticide --</option>
-                      {inventory.map((prod) => (
-                        <option key={prod.id} value={prod.id} className="bg-white dark:bg-[#070b13] text-slate-800 dark:text-slate-100">
-                          {prod.name} (Stock: {prod.stock}) - Rs. {prod.price}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 rotate-90 h-4 w-4 text-slate-400 pointer-events-none" />
+                  <div 
+                    onClick={() => {
+                      setTempSingleSelectedId(selectedProductId);
+                      setShowProductModal(true);
+                    }}
+                    className="relative cursor-pointer"
+                  >
+                    <div className="w-full bg-slate-50 dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 rounded-2xl py-3 px-4 pr-10 text-xs font-extrabold text-slate-800 dark:text-slate-100 flex items-center justify-between">
+                      <span className="truncate">
+                        {selectedProductId 
+                          ? (() => {
+                              const p = inventory.find(i => i.id === selectedProductId);
+                              return p ? `${p.name} (Stock: ${p.stock}) - Rs. ${p.price}` : '-- Choose Pesticide --';
+                            })()
+                          : '-- Choose Pesticide --'
+                        }
+                      </span>
+                      <ChevronRight className="rotate-90 h-4 w-4 text-slate-400 shrink-0" />
+                    </div>
                   </div>
                 </div>
 
@@ -1034,12 +1150,12 @@ export default function SellProduct() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-1.5">
-                      Quantity
+                      QUANTITY
                     </label>
                     <input
                       type="number"
                       min="1"
-                      placeholder="Qty"
+                      placeholder="1"
                       value={quantity}
                       onChange={(e) => setQuantity(e.target.value === '' ? '' : Number(e.target.value))}
                       className="w-full bg-slate-50 dark:bg-[#070b13] border border-slate-200 dark:border-slate-800 rounded-2xl py-3 px-4 text-xs font-extrabold text-slate-800 dark:text-slate-100 outline-none focus:border-orange-500"
@@ -1048,7 +1164,7 @@ export default function SellProduct() {
 
                   <div>
                     <label className="text-xs font-black text-slate-500 uppercase tracking-wider block mb-1.5">
-                      Price (Rs.)
+                      PRICE (RS.)
                     </label>
                     <input
                       type="number"
@@ -1065,9 +1181,9 @@ export default function SellProduct() {
                 <button
                   type="button"
                   onClick={handleAddToCart}
-                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 text-white font-black text-xs uppercase tracking-wider shadow-md hover:scale-[1.01] active:scale-95 transition-all flex items-center justify-center gap-2"
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 text-white font-black text-xs uppercase tracking-wider shadow-[0_4px_15px_rgba(249,115,22,0.3)] hover:scale-[1.01] active:scale-95 transition-all flex items-center justify-center gap-2"
                 >
-                  <Plus className="h-4 w-4 stroke-[3]" /> Add Product To Bill
+                  <Plus className="h-4 w-4 stroke-[3]" /> ADD PRODUCT TO BILL
                 </button>
               </div>
             </div>
@@ -1093,7 +1209,7 @@ export default function SellProduct() {
                   {cartItems.map((item) => (
                     <div
                       key={item.id}
-                      className="bg-slate-50 dark:bg-[#070b13] p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      className="bg-slate-50 dark:bg-[#070b13] p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all hover:border-orange-500/50"
                     >
                       <div>
                         <h4 className="text-sm font-black text-slate-800 dark:text-slate-100">{item.name}</h4>
@@ -1276,7 +1392,7 @@ export default function SellProduct() {
                 </div>
               </div>
 
-              {/* Customer Cards List */}
+              {/* GLOWING ANIMATED CUSTOMER CARDS LIST (Class Select Inspired Style) */}
               <div className="space-y-3">
                 {paginatedCustomerBills.length === 0 ? (
                   <div className="text-center py-8 bg-slate-50 dark:bg-[#070b13] rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
@@ -1286,50 +1402,56 @@ export default function SellProduct() {
                   paginatedCustomerBills.map((bill) => (
                     <div
                       key={bill.id}
-                      className="bg-slate-50/70 dark:bg-[#070b13]/70 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800/60 space-y-2 shadow-sm hover:border-orange-500/50 transition-all"
+                      className="relative overflow-hidden bg-white dark:bg-[#070b13] p-4 rounded-3xl border-2 border-orange-500/80 shadow-[0_0_15px_rgba(249,115,22,0.18)] hover:shadow-[0_0_25px_rgba(249,115,22,0.35)] transition-all duration-300 space-y-2.5"
                     >
                       <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">{bill.customerName}</h4>
-                          <span className="text-[10px] font-bold text-slate-400">
-                            {new Date(bill.date).toLocaleDateString()}
-                          </span>
+                        <div className="flex items-center gap-2">
+                          <div className="h-6 w-6 rounded-full bg-orange-500/10 border border-orange-500 flex items-center justify-center shrink-0">
+                            <Check className="h-3.5 w-3.5 text-orange-500 stroke-[3]" />
+                          </div>
+                          <div>
+                            <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white">{bill.customerName}</h4>
+                            <span className="text-[10px] font-bold text-slate-400">
+                              {new Date(bill.date).toLocaleDateString()}
+                            </span>
+                          </div>
                         </div>
-                        <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full ${
+
+                        <span className={`text-[10px] font-black px-2.5 py-1 rounded-full shadow-sm ${
                           bill.creditAmount > 0 
-                            ? 'bg-rose-500/10 text-rose-500 border border-rose-500/30' 
-                            : 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
+                            ? 'bg-rose-500 text-white border border-rose-400' 
+                            : 'bg-orange-500 text-white border border-orange-400'
                         }`}>
                           {bill.creditAmount > 0 ? `Credit: Rs. ${bill.creditAmount}` : 'Paid Net Cash'}
                         </span>
                       </div>
 
-                      <div className="text-xs font-bold text-slate-600 dark:text-slate-300 space-y-1">
+                      <div className="text-xs font-bold text-slate-600 dark:text-slate-300 space-y-1 bg-slate-50 dark:bg-[#0c1222] p-2.5 rounded-2xl border border-slate-100 dark:border-slate-800/80">
                         {bill.items.map((it, idx) => (
                           <div key={idx} className="flex justify-between">
                             <span>{it.name} ({it.quantity}x)</span>
-                            <span>Rs. {it.total}</span>
+                            <span className="font-extrabold text-orange-500">Rs. {it.total}</span>
                           </div>
                         ))}
                       </div>
 
-                      <div className="border-t border-slate-200 dark:border-slate-800 pt-2 flex justify-between items-center text-xs font-black">
+                      <div className="border-t border-slate-100 dark:border-slate-800 pt-2 flex justify-between items-center text-xs font-black">
                         <span className="text-slate-900 dark:text-white">Total: Rs. {bill.grandTotal}</span>
                         
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
                           <button
                             onClick={() => {
                               setLatestBill(bill);
                               setShowBillModal(true);
                             }}
-                            className="text-xs font-extrabold text-orange-500 hover:underline"
+                            className="text-[11px] font-black text-orange-500 hover:underline px-2 py-1 rounded-lg hover:bg-orange-500/10 transition-colors"
                           >
                             View Receipt
                           </button>
 
                           <button
                             onClick={() => handleOpenEditModal(bill)}
-                            className="p-1 text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-950/40 rounded-lg transition-colors flex items-center gap-0.5"
+                            className="p-1.5 text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-950/40 rounded-xl transition-colors flex items-center gap-1 border border-sky-500/30"
                             title="Edit Receipt"
                           >
                             <Edit3 className="h-3.5 w-3.5" />
@@ -1337,8 +1459,8 @@ export default function SellProduct() {
                           </button>
 
                           <button
-                            onClick={() => handleDeleteBill(bill.id)}
-                            className="p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors flex items-center gap-0.5"
+                            onClick={() => setDeletingBillId(bill.id)}
+                            className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition-colors flex items-center gap-1 border border-rose-500/30"
                             title="Delete Receipt"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -1351,29 +1473,29 @@ export default function SellProduct() {
                 )}
               </div>
 
-              {/* PAGINATION UI */}
+              {/* PAGINATION OF SEVEN UI WITH PREV AND NEXT BUTTONS */}
               {filteredCustomerBills.length > 0 && (
-                <div className="bg-white dark:bg-[#0c1222] rounded-2xl p-3 border border-slate-200/80 dark:border-slate-800/80 flex flex-col items-center gap-2 shadow-sm mt-4">
+                <div className="bg-white dark:bg-[#0c1222] rounded-3xl p-3 border-2 border-orange-500/60 shadow-[0_0_15px_rgba(249,115,22,0.15)] flex flex-col items-center gap-2 mt-4">
                   <p className="text-[11px] font-black text-slate-500 dark:text-slate-400">
                     Showing <span className="text-orange-500 font-extrabold">{filteredCustomerBills.length > 0 ? currentStartRecord + 1 : 0}</span> to <span className="text-orange-500 font-extrabold">{currentEndRecord}</span> of <span className="text-slate-900 dark:text-white font-extrabold">{filteredCustomerBills.length}</span> records
                   </p>
 
-                  <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                  <div className="flex items-center gap-2 flex-wrap justify-center">
                     <button
                       onClick={() => setCustomerPage(p => Math.max(p - 1, 1))}
                       disabled={customerPage === 1}
-                      className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-[#070b13] text-slate-600 dark:text-slate-300 font-bold text-[11px] hover:bg-orange-500 hover:text-white disabled:opacity-40 transition-all flex items-center gap-0.5"
+                      className="px-3.5 py-1.5 rounded-full bg-slate-100 dark:bg-[#070b13] text-slate-700 dark:text-slate-300 font-black text-xs hover:bg-orange-500 hover:text-white disabled:opacity-40 transition-all flex items-center gap-1 border border-slate-200 dark:border-slate-800 shadow-sm"
                     >
-                      <ChevronLeft className="h-3 w-3" /> Prev
+                      <ChevronLeft className="h-4 w-4" /> Prev
                     </button>
 
                     {Array.from({ length: totalCustomerPages }, (_, i) => i + 1).map((pageNum) => (
                       <button
                         key={pageNum}
                         onClick={() => setCustomerPage(pageNum)}
-                        className={`h-7 w-7 rounded-full font-black text-[11px] transition-all ${
+                        className={`h-8 w-8 rounded-full font-black text-xs transition-all ${
                           customerPage === pageNum
-                            ? 'bg-orange-500 text-white shadow-md'
+                            ? 'bg-orange-500 text-white shadow-[0_0_10px_rgba(249,115,22,0.5)] scale-110'
                             : 'bg-slate-100 dark:bg-[#070b13] text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800'
                         }`}
                       >
@@ -1384,9 +1506,9 @@ export default function SellProduct() {
                     <button
                       onClick={() => setCustomerPage(p => Math.min(p + 1, totalCustomerPages))}
                       disabled={customerPage === totalCustomerPages}
-                      className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-[#070b13] text-slate-600 dark:text-slate-300 font-bold text-[11px] hover:bg-orange-500 hover:text-white disabled:opacity-40 transition-all flex items-center gap-0.5"
+                      className="px-3.5 py-1.5 rounded-full bg-slate-100 dark:bg-[#070b13] text-slate-700 dark:text-slate-300 font-black text-xs hover:bg-orange-500 hover:text-white disabled:opacity-40 transition-all flex items-center gap-1 border border-slate-200 dark:border-slate-800 shadow-sm"
                     >
-                      Next <ChevronRight className="h-3 w-3" />
+                      Next <ChevronRight className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
@@ -1398,10 +1520,159 @@ export default function SellProduct() {
         </div>
       </main>
 
+      {/* PRODUCT SELECTOR MODAL (EXACT SELECT CLASS CARD MATCHING DESIGN) */}
+      {showProductModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-[#f8fafc] dark:bg-[#070b13] border-2 border-orange-500/90 rounded-[32px] p-5 sm:p-6 max-w-md w-full shadow-[0_0_35px_rgba(249,115,22,0.35)] space-y-4 my-auto relative">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-slate-800/80">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-2xl bg-orange-500 text-white flex items-center justify-center shadow-md shrink-0">
+                  <Package className="h-5 w-5 stroke-[2.2]" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white leading-tight">
+                    Select Pesticide Product
+                  </h3>
+                  <p className="text-[11px] font-bold text-slate-400">
+                    Choose pesticide to load items ({filteredModalProducts.length} Available)
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowProductModal(false)}
+                className="h-8 w-8 rounded-full bg-slate-100 dark:bg-slate-800/80 text-slate-400 hover:text-orange-500 flex items-center justify-center transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Filter Input */}
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-orange-500" />
+              <input
+                type="text"
+                placeholder="Filter products by name or code..."
+                value={productSearchQuery}
+                onChange={(e) => setProductSearchQuery(e.target.value)}
+                className="w-full bg-white dark:bg-[#0c1222] border-2 border-orange-500/30 rounded-2xl py-2.5 pl-10 pr-4 text-xs font-bold text-slate-800 dark:text-slate-100 outline-none focus:border-orange-500 transition-colors shadow-sm"
+              />
+            </div>
+
+            {/* Products Selection List Cards */}
+            <div className="max-h-[50vh] overflow-y-auto space-y-3 pr-1">
+              {filteredModalProducts.length === 0 ? (
+                <div className="text-center py-8 bg-white dark:bg-[#0c1222] rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
+                  <p className="text-xs font-bold text-slate-400">No pesticide products found.</p>
+                </div>
+              ) : (
+                filteredModalProducts.map((prod) => {
+                  const isSingleSelected = tempSingleSelectedId === prod.id;
+                  const isMultiSelected = tempMultiSelectedIds.includes(prod.id);
+                  const isSelected = selectionMode === 'single' ? isSingleSelected : isMultiSelected;
+
+                  return (
+                    <div
+                      key={prod.id}
+                      onClick={() => {
+                        if (selectionMode === 'single') {
+                          setTempSingleSelectedId(prod.id);
+                        } else {
+                          setTempMultiSelectedIds(prev =>
+                            prev.includes(prod.id)
+                              ? prev.filter(i => i !== prod.id)
+                              : [...prev, prod.id]
+                          );
+                        }
+                      }}
+                      className={`relative overflow-hidden p-4 rounded-3xl border-2 transition-all duration-200 cursor-pointer flex items-center justify-between gap-3 ${
+                        isSelected
+                          ? 'bg-amber-50/60 dark:bg-amber-950/20 border-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.25)]'
+                          : 'bg-white dark:bg-[#0c1222] border-slate-200/80 dark:border-slate-800/80 hover:border-orange-500/50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`h-6 w-6 rounded-full flex items-center justify-center shrink-0 transition-colors ${
+                          isSelected
+                            ? 'bg-orange-500 text-white'
+                            : 'border-2 border-slate-300 dark:border-slate-700 bg-transparent'
+                        }`}>
+                          {isSelected && <Check className="h-3.5 w-3.5 stroke-[3]" />}
+                        </div>
+
+                        <div>
+                          <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white leading-tight">
+                            {prod.name}
+                          </h4>
+                          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mt-0.5">
+                            Stock: {prod.stock} units
+                          </span>
+                        </div>
+                      </div>
+
+                      <span className="text-xs font-black px-3 py-1 rounded-full bg-orange-500 text-white shadow-sm shrink-0">
+                        Rs. {prod.price}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* OK Button */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleConfirmProductModalSelection}
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 text-white font-black text-xs uppercase tracking-wider shadow-lg hover:scale-[1.01] active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                <Check className="h-4 w-4 stroke-[3]" /> OK
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM BEAUTIFUL DELETE CONFIRMATION MODAL WITH PERMISSION */}
+      {deletingBillId && (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-white dark:bg-[#0c1222] border-2 border-rose-500 rounded-3xl p-6 max-w-sm w-full shadow-[0_0_30px_rgba(225,29,72,0.3)] space-y-4 text-center">
+            <div className="h-12 w-12 rounded-2xl bg-rose-500/10 border border-rose-500 text-rose-500 flex items-center justify-center mx-auto">
+              <Trash2 className="h-6 w-6 stroke-[2.2]" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-black text-slate-900 dark:text-white">Delete Customer Receipt?</h3>
+              <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                Are you sure you want to delete this sales receipt permanently?
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                onClick={() => setDeletingBillId(null)}
+                className="py-2.5 bg-slate-100 dark:bg-[#070b13] text-slate-700 dark:text-slate-300 font-black text-xs rounded-xl hover:bg-slate-200 dark:hover:bg-slate-800 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDeleteBill}
+                className="py-2.5 bg-rose-600 text-white font-black text-xs rounded-xl shadow-md hover:bg-rose-700 transition-all"
+              >
+                Delete Receipt
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* EDIT BILL BEAUTIFUL CARD MODAL */}
       {editingBill && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
-          <div className="bg-white dark:bg-[#0c1222] border-2 border-orange-500/70 rounded-3xl p-5 max-w-lg w-full shadow-2xl space-y-4 my-8">
+          <div className="bg-white dark:bg-[#0c1222] border-2 border-orange-500/80 rounded-3xl p-5 max-w-lg w-full shadow-[0_0_30px_rgba(249,115,22,0.3)] space-y-4 my-8">
             
             <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-orange-500">
