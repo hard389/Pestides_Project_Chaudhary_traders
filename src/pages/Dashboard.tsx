@@ -34,7 +34,8 @@ import {
   Info,
   RotateCcw,
   Download,
-  Smartphone
+  Smartphone,
+  Receipt
 } from 'lucide-react';
 
 // Firebase Configuration
@@ -634,6 +635,7 @@ export default function Dashboard() {
             </span>
           </div>
 
+          {/* GRID OF QUICK ACCESS ITEMS */}
           <div className="grid grid-cols-3 gap-3">
             {quickAccessItems.map((item, index) => {
               const IconComp = item.icon;
@@ -653,6 +655,34 @@ export default function Dashboard() {
               );
             })}
           </div>
+
+          {/* NEW ROW CARD: EXPENSES + INVOICE + PROFIT */}
+          <button
+            onClick={() => navigate('/quiz')}
+            className="w-full group relative flex items-center justify-between p-4.5 rounded-3xl bg-gradient-to-r from-purple-500/10 via-indigo-500/10 to-pink-500/10 border-2 border-purple-300/80 dark:border-purple-800/60 dark:bg-[#0c1222] transition-all duration-300 transform hover:-translate-y-1 active:scale-[0.98] cursor-pointer hover:shadow-[0_0_25px_rgba(168,85,247,0.35)] overflow-hidden"
+          >
+            <div className="flex items-center gap-3.5 z-10">
+              <div className="p-3 rounded-2xl bg-purple-500/15 text-purple-600 dark:text-purple-400 group-hover:scale-110 transition-transform duration-300 shadow-sm">
+                <Receipt className="h-7 w-7 stroke-[2.2]" />
+              </div>
+              <div className="text-left">
+                <h3 className="text-sm sm:text-base font-black tracking-tight text-purple-700 dark:text-purple-300 group-hover:text-purple-600 dark:group-hover:text-purple-200 transition-colors">
+                  Expenses + Invoice + Profit
+                </h3>
+                <p className="text-[10px] sm:text-[11px] font-extrabold text-purple-500/80 dark:text-purple-400/80">
+                  Monthly Financial Ledger & Net Profit Calculator
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-500/10 dark:bg-purple-500/20 text-purple-600 dark:text-purple-300 font-extrabold text-xs group-hover:translate-x-1 transition-transform z-10 shrink-0 border border-purple-300/40 dark:border-purple-700/40">
+              <span>View</span>
+              <ArrowRight className="h-4 w-4" />
+            </div>
+
+            {/* Animated Glow Effect */}
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-purple-500/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out pointer-events-none" />
+          </button>
         </div>
 
         {/* FINANCIAL OVERVIEW SECTION */}
