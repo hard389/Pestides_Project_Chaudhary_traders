@@ -16,7 +16,6 @@ import {
   Sparkles,
   Edit2,
   Trash2,
-  MoreVertical,
   Loader2,
   AlertTriangle,
   CheckCircle2,
@@ -204,7 +203,7 @@ export default function Inventory() {
     return user.email ? user.email.toLowerCase().trim() : user.uid;
   };
 
-  // Real-time Firestore Sync (Products Sorted: Newest Created First)
+  // Real-time Firestore Sync
   useEffect(() => {
     if (!currentUser) {
       setCategoryList([]);
@@ -219,7 +218,6 @@ export default function Inventory() {
         const data = docSnap.data();
         let productsList: Product[] = Array.isArray(data.products) ? data.products : [];
         
-        // Sort products inside category: Newest created first
         productsList = productsList.sort((a, b) => {
           const dateA = a.createdAt ? new Date(a.createdAt).getTime() : a.id || 0;
           const dateB = b.createdAt ? new Date(b.createdAt).getTime() : b.id || 0;
@@ -235,7 +233,6 @@ export default function Inventory() {
         };
       });
 
-      // Sort Categories: Newest created or alphabetized
       fetchedCategories.sort((a, b) => 
         a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
       );
@@ -269,13 +266,12 @@ export default function Inventory() {
       });
   }, [categoryList, searchQuery]);
 
-  // PRODUCTS FILTERING & SORTING (NEWEST PRODUCTS SHOWN FIRST)
+  // PRODUCTS FILTERING & SORTING
   const sortedAndFilteredProducts = useMemo(() => {
     if (!currentCategory) return [];
 
     let list = [...(currentCategory.products || [])];
 
-    // Ensure Newest Products are Shown First
     list.sort((a, b) => {
       const timeA = a.createdAt ? new Date(a.createdAt).getTime() : a.id;
       const timeB = b.createdAt ? new Date(b.createdAt).getTime() : b.id;
@@ -380,7 +376,7 @@ export default function Inventory() {
     }
   };
 
-  // SAVE PRODUCT TO FIREBASE (FETCH / SHOWN FIRST)
+  // SAVE PRODUCT TO FIREBASE
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!productName || !costPrice || !currentUser) return;
@@ -389,7 +385,6 @@ export default function Inventory() {
       const userDocId = getUserDocId(currentUser);
       let targetCategoryId = activeCategoryId || categoryList[0]?.id;
 
-      // Create default category if none exists
       if (!targetCategoryId) {
         targetCategoryId = 'general_inventory';
         const defaultCategoryRef = doc(db, 'users', userDocId, 'inventory_categories', targetCategoryId);
@@ -432,7 +427,6 @@ export default function Inventory() {
           avatar: productAvatar || defaultAvatar,
           createdAt: new Date().toISOString()
         };
-        // Unshift adds product to top of list so it is created & fetched first
         updatedProducts.unshift(newProductObj);
       }
 
@@ -451,7 +445,7 @@ export default function Inventory() {
     }
   };
 
-  // PRINT INVOICE & STOCK INVENTORY FUNCTION WITH PERMISSION & NOTIFICATION
+  // PRINT INVOICE FUNCTION
   const handleConfirmAndPrint = () => {
     setIsPrintModalOpen(false);
     showCenterNotification('print', 'Preparing PDF...', 'Generating Chaudhary Trader Stock Invoice.');
@@ -597,13 +591,11 @@ export default function Inventory() {
         <body>
           <div class="invoice-card">
             
-            <!-- HEADER -->
             <div class="header-title">
               <h1 class="company-name">Chaudhary Trader</h1>
               <div class="tagline">Stock Inventory & Product Invoice Statement</div>
             </div>
 
-            <!-- ADDRESS & INFO -->
             <div class="details-box">
               <div class="details-col">
                 <p><strong>Address:</strong> Chak No 389 Jb Toba Tek Singh Punjab Pakistan</p>
@@ -617,7 +609,6 @@ export default function Inventory() {
               </div>
             </div>
 
-            <!-- PRODUCT TABLE -->
             <table>
               <thead>
                 <tr>
@@ -650,7 +641,6 @@ export default function Inventory() {
               </tbody>
             </table>
 
-            <!-- SUMMARY & OWNER FOOTER -->
             <div class="summary-container">
               <div class="owner-section">
                 <div class="owner-title">Authorized Owner</div>
@@ -683,7 +673,6 @@ export default function Inventory() {
     printWindow.document.close();
   };
 
-  // NAV BAR ITEMS MATCHING DESIGN EXACTLY
   const navigationTabs = [
     { id: 'home', label: 'Home', icon: Home, href: '/' },
     { id: 'add_product', label: 'Add Product', icon: PackagePlus, action: () => handleOpenAddProduct() },
@@ -722,7 +711,7 @@ export default function Inventory() {
               <ArrowLeft className="h-4 w-4" />
             </button>
 
-            {/* SEARCH / PRODUCT NAME FILTER INPUT */}
+            {/* SEARCH INPUT */}
             <div className="relative w-full max-w-[200px] sm:max-w-xs">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
               <input
@@ -775,14 +764,11 @@ export default function Inventory() {
         {/* VIEW 1: CATEGORIES DIRECTORY */}
         {!activeCategoryId && (
           <>
-            {/* CHAUDHARY TRADERS HERO BANNER CARD */}
             <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-white via-orange-50/40 to-amber-50/20 dark:from-[#0c1222] dark:via-[#0c1222]/90 dark:to-[#070b13] p-6 sm:p-8 border-2 border-orange-500/40 dark:border-orange-500/50 shadow-[0_0_35px_rgba(249,115,22,0.25)] hover:shadow-[0_0_55px_rgba(249,115,22,0.45)] transition-all duration-500 group">
-              
               <div className="absolute -top-12 -right-12 h-44 w-44 rounded-full bg-orange-500/25 blur-3xl animate-pulse pointer-events-none" />
               <div className="absolute -bottom-12 -left-12 h-44 w-44 rounded-full bg-amber-500/20 blur-3xl animate-pulse pointer-events-none delay-700" />
               
               <div className="relative z-10 space-y-5">
-                
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full border border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400 shadow-[0_0_15px_rgba(249,115,22,0.3)] backdrop-blur-md">
                     <span className="relative flex h-2.5 w-2.5">
@@ -822,7 +808,6 @@ export default function Inventory() {
                     <Printer className="h-4 w-4" /> Print Stock Invoice
                   </Button>
                 </div>
-
               </div>
             </div>
 
@@ -854,7 +839,7 @@ export default function Inventory() {
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={(e) => handleOpenEditCategory(cls, e)}
-                        className="p-1.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 hover:shadow-[0_0_12px_rgba(16,185,129,0.4)] transition-all active:scale-95"
+                        className="p-1.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all active:scale-95"
                         title="Edit Category"
                       >
                         <Edit2 className="h-3.5 w-3.5" />
@@ -864,7 +849,7 @@ export default function Inventory() {
                           e.stopPropagation();
                           setDeleteConfirmCategory(cls);
                         }}
-                        className="p-1.5 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 hover:shadow-[0_0_12px_rgba(244,63,94,0.4)] transition-all active:scale-95"
+                        className="p-1.5 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-all active:scale-95"
                         title="Delete Category"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -890,7 +875,7 @@ export default function Inventory() {
                   <div className="flex items-center gap-2 pt-1">
                     <button
                       onClick={() => handleOpenAddProduct(cls.id)}
-                      className="flex-1 py-2.5 px-3 rounded-2xl bg-orange-500/10 hover:bg-orange-500/20 text-orange-600 dark:text-orange-400 font-extrabold text-xs transition-all flex items-center justify-center gap-1.5 border border-orange-500/20 hover:shadow-[0_0_15px_rgba(249,115,22,0.25)] active:scale-95"
+                      className="flex-1 py-2.5 px-3 rounded-2xl bg-orange-500/10 hover:bg-orange-500/20 text-orange-600 dark:text-orange-400 font-extrabold text-xs transition-all flex items-center justify-center gap-1.5 border border-orange-500/20 active:scale-95"
                     >
                       <Plus className="h-3.5 w-3.5" /> Add Product
                     </button>
@@ -949,14 +934,14 @@ export default function Inventory() {
             <div className="bg-white dark:bg-[#0c1222] border border-slate-200/70 dark:border-slate-800/60 rounded-3xl p-3 shadow-sm space-y-2">
               
               {/* TABLE HEADER */}
-              <div className="flex items-center justify-between text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-wider px-2 py-1.5 border-b border-slate-100 dark:border-slate-800/60 w-full">
-                <div className="flex-1 min-w-0 pr-1">Product Details</div>
-                <div className="w-16 shrink-0 text-center">Qty</div>
-                <div className="shrink-0 px-1 text-center min-w-[70px]">Cost Price</div>
-                <div className="shrink-0 text-right pl-1 min-w-[55px]">Actions</div>
+              <div className="flex items-center gap-2 text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-wider px-2 py-1.5 border-b border-slate-100 dark:border-slate-800/60 w-full">
+                <div className="flex-1 min-w-0 pr-1">PRODUCT DETAILS</div>
+                <div className="w-10 sm:w-14 shrink-0 text-center">QTY</div>
+                <div className="hidden sm:block shrink-0 text-center sm:min-w-[75px]">COST PRICE</div>
+                <div className="shrink-0 text-right min-w-[46px] sm:min-w-[50px]">ACTIONS</div>
               </div>
 
-              {/* TABLE BODY (NO TRUNCATION FIX FOR MOBILE) */}
+              {/* TABLE BODY */}
               {paginatedProducts.length === 0 ? (
                 <div className="text-center py-8 text-xs font-bold text-slate-400">
                   No products in this category.
@@ -965,17 +950,20 @@ export default function Inventory() {
                 paginatedProducts.map((product) => (
                   <div
                     key={product.id}
-                    className="flex items-center justify-between gap-1.5 px-2 py-2.5 rounded-2xl hover:bg-orange-500/5 dark:hover:bg-slate-900/60 transition-colors border-b border-slate-100 dark:border-slate-800/40 last:border-0 w-full group"
+                    className="flex items-center gap-2 px-2 py-2.5 rounded-2xl hover:bg-orange-500/5 dark:hover:bg-slate-900/60 transition-colors border-b border-slate-100 dark:border-slate-800/40 last:border-0 w-full group"
                   >
-                    {/* PRODUCT NAME & IMAGE - Full Name Wrap Fix */}
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-1">
+                    {/* PRODUCT NAME & IMAGE */}
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
                       <img
                         src={product.avatar}
                         alt={product.name}
-                        className="h-9 w-9 rounded-xl object-cover shrink-0 border border-slate-200 dark:border-slate-800 shadow-sm bg-slate-100 dark:bg-slate-900"
+                        className="h-8 w-8 sm:h-9 sm:w-9 rounded-xl object-cover shrink-0 border border-slate-200 dark:border-slate-800 shadow-sm bg-slate-100 dark:bg-slate-900"
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-black text-slate-900 dark:text-slate-100 leading-tight break-words line-clamp-2">
+                        <p
+                          className="text-xs font-extrabold text-slate-900 dark:text-slate-100 leading-tight break-words"
+                          title={product.name}
+                        >
                           {product.name}
                         </p>
                         <p className="text-[9px] font-bold text-slate-400 mt-0.5 whitespace-nowrap">
@@ -984,32 +972,32 @@ export default function Inventory() {
                       </div>
                     </div>
 
-                    {/* PRODUCT QUANTITY */}
-                    <div className="w-14 shrink-0 text-center text-xs font-black text-slate-800 dark:text-slate-200">
-                      <span className="bg-orange-500/10 text-orange-600 dark:text-orange-400 px-2 py-0.5 rounded-md border border-orange-500/20 inline-block">
+                    {/* QUANTITY */}
+                    <div className="w-10 sm:w-14 shrink-0 text-center">
+                      <span className="bg-orange-500/10 text-orange-600 dark:text-orange-400 px-1.5 sm:px-2 py-0.5 rounded-md border border-orange-500/20 inline-block text-[11px] sm:text-xs font-black">
                         {product.quantity}
                       </span>
                     </div>
 
                     {/* COST PRICE */}
-                    <div className="shrink-0 px-1 text-center min-w-[65px]">
-                      <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400 block">
+                    <div className="hidden sm:block shrink-0 text-center sm:min-w-[75px]">
+                      <span className="text-[10px] sm:text-[11px] font-black text-emerald-600 dark:text-emerald-400 block whitespace-nowrap">
                         PKR {Number(product.costPrice || 0).toLocaleString()}
                       </span>
                     </div>
 
                     {/* ACTIONS */}
-                    <div className="shrink-0 flex items-center justify-end gap-1 pl-1 min-w-[50px]">
+                    <div className="shrink-0 flex items-center justify-end gap-1 min-w-[46px] sm:min-w-[50px]">
                       <button
                         onClick={() => handleOpenEditProduct(product)}
-                        className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 hover:shadow-[0_0_10px_rgba(16,185,129,0.4)] transition-all active:scale-95"
+                        className="p-1 sm:p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all active:scale-95"
                         title="Edit Product"
                       >
                         <Edit2 className="h-3 w-3" />
                       </button>
                       <button
                         onClick={() => setDeleteConfirmProduct(product)}
-                        className="p-1.5 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 hover:shadow-[0_0_10px_rgba(244,63,94,0.4)] transition-all active:scale-95"
+                        className="p-1 sm:p-1.5 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-all active:scale-95"
                         title="Delete Product"
                       >
                         <Trash2 className="h-3 w-3" />
@@ -1030,7 +1018,7 @@ export default function Inventory() {
                     <button
                       disabled={currentPage === 1}
                       onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-                      className="flex items-center gap-0.5 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-800 text-[10px] font-black disabled:opacity-40 hover:bg-orange-500 hover:text-white transition-all hover:shadow-[0_0_10px_rgba(249,115,22,0.3)]"
+                      className="flex items-center gap-0.5 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-800 text-[10px] font-black disabled:opacity-40 hover:bg-orange-500 hover:text-white transition-all"
                     >
                       <ChevronLeft className="h-3 w-3" /> Prev
                     </button>
@@ -1038,7 +1026,7 @@ export default function Inventory() {
                     <button
                       disabled={currentPage === totalPages}
                       onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-                      className="flex items-center gap-0.5 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-800 text-[10px] font-black disabled:opacity-40 hover:bg-orange-500 hover:text-white transition-all hover:shadow-[0_0_10px_rgba(249,115,22,0.3)]"
+                      className="flex items-center gap-0.5 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-800 text-[10px] font-black disabled:opacity-40 hover:bg-orange-500 hover:text-white transition-all"
                     >
                       Next <ChevronRight className="h-3 w-3" />
                     </button>
@@ -1053,7 +1041,7 @@ export default function Inventory() {
 
       </main>
 
-      {/* CENTER GLOWING NOTIFICATION TOAST */}
+      {/* CENTER NOTIFICATION TOAST */}
       {toast.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in zoom-in-90 duration-200">
           <div className={`bg-white dark:bg-[#0c1222] border rounded-3xl p-6 max-w-xs w-full text-center space-y-3 relative shadow-2xl transition-all duration-300 ${
@@ -1065,10 +1053,10 @@ export default function Inventory() {
           }`}>
             <div className={`w-14 h-14 mx-auto rounded-full flex items-center justify-center animate-bounce ${
               toast.type === 'success' 
-                ? 'bg-emerald-500/20 text-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)]' 
+                ? 'bg-emerald-500/20 text-emerald-500' 
                 : toast.type === 'print'
-                ? 'bg-orange-500/20 text-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.3)]'
-                : 'bg-rose-500/20 text-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.3)]'
+                ? 'bg-orange-500/20 text-orange-500'
+                : 'bg-rose-500/20 text-rose-500'
             }`}>
               {toast.type === 'success' ? (
                 <CheckCircle2 className="h-8 w-8" />
@@ -1091,12 +1079,12 @@ export default function Inventory() {
         </div>
       )}
 
-      {/* PRINT PERMISSION MODAL WITH GLOWING NOTIFICATION */}
+      {/* PRINT PERMISSION MODAL */}
       {isPrintModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="bg-white dark:bg-[#0c1222] border border-orange-500/40 rounded-3xl max-w-sm w-full p-6 shadow-[0_0_50px_rgba(249,115,22,0.35)] relative text-center space-y-4">
             
-            <div className="w-14 h-14 bg-orange-500/10 text-orange-500 rounded-2xl flex items-center justify-center mx-auto border border-orange-500/30 shadow-[0_0_20px_rgba(249,115,22,0.25)] animate-pulse">
+            <div className="w-14 h-14 bg-orange-500/10 text-orange-500 rounded-2xl flex items-center justify-center mx-auto border border-orange-500/30 animate-pulse">
               <ShieldCheck className="h-7 w-7 text-orange-500" />
             </div>
 
@@ -1131,9 +1119,9 @@ export default function Inventory() {
       {/* DELETE CATEGORY CONFIRMATION MODAL */}
       {deleteConfirmCategory && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-[#0c1222] border border-rose-500/40 rounded-3xl max-w-sm w-full p-6 shadow-[0_0_50px_rgba(244,63,94,0.3)] relative text-center space-y-4">
+          <div className="bg-white dark:bg-[#0c1222] border border-rose-500/40 rounded-3xl max-w-sm w-full p-6 shadow-2xl relative text-center space-y-4">
             
-            <div className="w-12 h-12 bg-rose-500/10 text-rose-500 rounded-2xl flex items-center justify-center mx-auto border border-rose-500/30 shadow-[0_0_15px_rgba(244,63,94,0.2)]">
+            <div className="w-12 h-12 bg-rose-500/10 text-rose-500 rounded-2xl flex items-center justify-center mx-auto border border-rose-500/30">
               <AlertTriangle className="h-6 w-6" />
             </div>
 
@@ -1155,7 +1143,7 @@ export default function Inventory() {
               </Button>
               <Button
                 onClick={handleConfirmDeleteCategory}
-                className="bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-black text-xs py-3 shadow-[0_0_15px_rgba(244,63,94,0.4)] transition-all active:scale-95"
+                className="bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-black text-xs py-3 transition-all active:scale-95"
               >
                 Yes, Delete
               </Button>
@@ -1168,9 +1156,9 @@ export default function Inventory() {
       {/* DELETE PRODUCT CONFIRMATION MODAL */}
       {deleteConfirmProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-[#0c1222] border border-rose-500/40 rounded-3xl max-w-sm w-full p-6 shadow-[0_0_50px_rgba(244,63,94,0.3)] relative text-center space-y-4">
+          <div className="bg-white dark:bg-[#0c1222] border border-rose-500/40 rounded-3xl max-w-sm w-full p-6 shadow-2xl relative text-center space-y-4">
             
-            <div className="w-12 h-12 bg-rose-500/10 text-rose-500 rounded-2xl flex items-center justify-center mx-auto border border-rose-500/30 shadow-[0_0_15px_rgba(244,63,94,0.2)]">
+            <div className="w-12 h-12 bg-rose-500/10 text-rose-500 rounded-2xl flex items-center justify-center mx-auto border border-rose-500/30">
               <AlertTriangle className="h-6 w-6" />
             </div>
 
@@ -1192,7 +1180,7 @@ export default function Inventory() {
               </Button>
               <Button
                 onClick={handleConfirmDeleteProduct}
-                className="bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-black text-xs py-3 shadow-[0_0_15px_rgba(244,63,94,0.4)] transition-all active:scale-95"
+                className="bg-rose-500 hover:bg-rose-600 text-white rounded-2xl font-black text-xs py-3 transition-all active:scale-95"
               >
                 Yes, Delete
               </Button>
@@ -1265,7 +1253,6 @@ export default function Inventory() {
               </span>
             </div>
 
-            {/* HIDDEN FILE INPUT */}
             <input 
               type="file" 
               ref={fileInputRef} 
@@ -1274,11 +1261,10 @@ export default function Inventory() {
               className="hidden" 
             />
 
-            {/* PRODUCT IMAGE PREVIEW & UPLOAD */}
             <div className="flex justify-center">
               <div 
                 onClick={() => fileInputRef.current?.click()}
-                className="relative w-24 h-24 rounded-2xl border-2 border-dashed border-orange-400 bg-orange-50/30 dark:bg-slate-900/40 flex flex-col items-center justify-center text-center cursor-pointer shadow-[0_0_15px_rgba(249,115,22,0.2)] hover:scale-105 transition-all overflow-hidden group"
+                className="relative w-24 h-24 rounded-2xl border-2 border-dashed border-orange-400 bg-orange-50/30 dark:bg-slate-900/40 flex flex-col items-center justify-center text-center cursor-pointer hover:scale-105 transition-all overflow-hidden group"
               >
                 {productAvatar ? (
                   <>
