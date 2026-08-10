@@ -85,6 +85,7 @@ export default function ExpensesAndProfit() {
   const [loading, setLoading] = useState(true);
   const [salesData, setSalesData] = useState<any[]>([]);
   const [inventoryCategories, setInventoryCategories] = useState<any[]>([]);
+  const [monthlyInventories, setMonthlyInventories] = useState<any[]>([]);
   const [inventoryCostMap, setInventoryCostMap] = useState<{ [key: string]: number }>({});
   const [monthlyExpenseList, setMonthlyExpenseList] = useState<any[]>([]);
 
@@ -173,14 +174,14 @@ export default function ExpensesAndProfit() {
     const notificationsRef = collection(db, "users", currentUserEmail, "notifications");
     const unsubscribe = onSnapshot(notificationsRef, (snapshot) => {
       const data: any[] = [];
-      snapshot.forEach((doc) => data.push({ id: doc.id, ...doc.data() }));
+      snapshot.forEach((docSnap) => data.push({ id: docSnap.id, ...docSnap.data() }));
       const unread = data.filter((item) => !item.read).length;
       setNotificationCount(unread);
     });
     return () => unsubscribe();
   }, [currentUserEmail]);
 
-  // Fetch Sales & Inventory Categories
+  // Fetch Sales & Inventory Categories (General Inventory)
   const fetchData = async () => {
     if (!currentUserEmail) return;
     setLoading(true);
@@ -225,6 +226,24 @@ export default function ExpensesAndProfit() {
     fetchData();
   }, [currentUserEmail]);
 
+  // Real-time Monthly Inventories Listener (from monthly_inventories collection)
+  useEffect(() => {
+    if (!currentUserEmail) return;
+
+    const monthlyInvRef = collection(db, 'users', currentUserEmail, 'monthly_inventories');
+    const unsubscribe = onSnapshot(monthlyInvRef, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      setMonthlyInventories(list);
+    }, (err) => {
+      console.error("Monthly inventories listener error:", err);
+    });
+
+    return () => unsubscribe();
+  }, [currentUserEmail]);
+
   // Realtime Expense Subcollection Listener for Selected Month
   useEffect(() => {
     if (!currentUserEmail || !selectedMonth) return;
@@ -264,6 +283,7 @@ export default function ExpensesAndProfit() {
   // Helper to extract Date object from records
   const parseRecordDate = (rec: any): Date => {
     if (rec.date) return new Date(rec.date);
+    if (rec.lastUpdated) return new Date(rec.lastUpdated);
     if (rec.createdAt?.seconds) return new Date(rec.createdAt.seconds * 1000);
     if (typeof rec.createdAt === 'string') return new Date(rec.createdAt);
     if (rec.timestamp) return new Date(rec.timestamp);
@@ -373,33 +393,120 @@ export default function ExpensesAndProfit() {
 
     const netProfit = totalGrossProfit - totalExpenses;
 
-    let addedInventoryValue = 0;
-    let addedInventoryItemsCount = 0;
-    const monthlyAddedProductsList: any[] = [];
-
+    // --- 1. TOTAL PRESENT STOCK VALUE (Calculated from General Inventory / inventory_categories) ---
+    const completeStockInventoryList: any[] = [];
     let totalStockPresentValue = 0;
 
     inventoryCategories.forEach((cat) => {
       if (Array.isArray(cat.products)) {
         cat.products.forEach((prod: any) => {
-          const price = Number(prod.costPrice || prod.salePrice || prod.purchasePrice || 0);
+          const price = Number(prod.costPrice || prod.purchasePrice || prod.salePrice || 0);
           const qty = Number(prod.quantity || 0);
-          totalStockPresentValue += price * qty;
+          const totalVal = price * qty;
+          totalStockPresentValue += totalVal;
 
-          const prodDate = parseRecordDate(prod);
-          const prodMonthKey = `${prodDate.getFullYear()}-${String(prodDate.getMonth() + 1).padStart(2, '0')}`;
-
-          if (prodMonthKey === selectedMonth) {
-            addedInventoryValue += price * qty;
-            addedInventoryItemsCount += 1;
-            monthlyAddedProductsList.push({
-              name: prod.name || 'Unnamed Product',
-              quantity: qty,
-              rate: price,
-              total: price * qty
-            });
-          }
+          completeStockInventoryList.push({
+            name: prod.name || 'Unnamed Product',
+            category: cat.categoryName || cat.name || 'General',
+            quantity: qty,
+            rate: price,
+            total: totalVal
+          });
         });
+      }
+    });
+
+    // --- 2. INVENTORY ADDED IN THIS MONTH (Fetched directly from monthly_inventories collection) ---
+    let addedInventoryValue = 0;
+    let addedInventoryItemsCount = 0;
+    const monthlyAddedProductsList: any[] = [];
+
+    monthlyInventories.forEach((docData) => {
+      // Check if doc belongs to selectedMonth (e.g. Doc ID "2026-08" or monthKey field)
+      const isMatch = 
+        docData.id === selectedMonth || 
+        docData.monthKey === selectedMonth || 
+        docData.month === selectedMonth ||
+        (docData.date && parseRecordDate(docData).toISOString().slice(0, 7) === selectedMonth);
+
+      if (isMatch) {
+        let rawItems = docData.items || docData.products || docData.inventory || docData.categories || docData.productList;
+        
+        // Handle Firestore Map / Dictionary structure (`items: { prodId: { ... } }`)
+        if (rawItems && typeof rawItems === 'object' && !Array.isArray(rawItems)) {
+          rawItems = Object.values(rawItems);
+        }
+
+        if (Array.isArray(rawItems)) {
+          rawItems.forEach((prod: any) => {
+            if (Array.isArray(prod.products)) {
+              prod.products.forEach((subProd: any) => {
+                const price = Number(subProd.costPrice || subProd.purchasePrice || subProd.price || subProd.rate || 0);
+                const qty = Number(subProd.addedInMonth !== undefined ? subProd.addedInMonth : (subProd.quantity || subProd.qty || 0));
+                const totalVal = Number(subProd.total || subProd.totalPrice || (price * qty));
+                
+                addedInventoryValue += totalVal;
+                addedInventoryItemsCount += 1;
+
+                let formattedDate = '-';
+                if (subProd.dateAdded) formattedDate = subProd.dateAdded;
+                else if (subProd.lastUpdated) formattedDate = new Date(subProd.lastUpdated).toLocaleDateString('en-GB');
+                else if (subProd.date) formattedDate = new Date(subProd.date).toLocaleDateString('en-GB');
+
+                monthlyAddedProductsList.push({
+                  name: subProd.name || subProd.productName || 'Unnamed Product',
+                  category: prod.categoryName || prod.name || 'General',
+                  quantity: qty,
+                  rate: price,
+                  total: totalVal,
+                  dateAdded: formattedDate
+                });
+              });
+            } else {
+              const price = Number(prod.costPrice || prod.purchasePrice || prod.price || prod.rate || 0);
+              const qty = Number(prod.addedInMonth !== undefined ? prod.addedInMonth : (prod.quantity || prod.qty || 0));
+              const totalVal = Number(prod.total || prod.totalPrice || (price * qty));
+              
+              addedInventoryValue += totalVal;
+              addedInventoryItemsCount += 1;
+
+              let formattedDate = '-';
+              if (prod.dateAdded) formattedDate = prod.dateAdded;
+              else if (prod.lastUpdated) formattedDate = new Date(prod.lastUpdated).toLocaleDateString('en-GB');
+              else if (prod.date) formattedDate = new Date(prod.date).toLocaleDateString('en-GB');
+
+              monthlyAddedProductsList.push({
+                name: prod.name || prod.productName || 'Unnamed Product',
+                category: prod.category || prod.categoryName || 'General',
+                quantity: qty,
+                rate: price,
+                total: totalVal,
+                dateAdded: formattedDate
+              });
+            }
+          });
+        } else if (docData.name || docData.productName) {
+          const price = Number(docData.costPrice || docData.purchasePrice || docData.price || docData.rate || 0);
+          const qty = Number(docData.addedInMonth !== undefined ? docData.addedInMonth : (docData.quantity || docData.qty || 0));
+          const totalVal = Number(docData.total || docData.totalPrice || (price * qty));
+
+          addedInventoryValue += totalVal;
+          addedInventoryItemsCount += 1;
+
+          let formattedDate = '-';
+          if (docData.dateAdded) formattedDate = docData.dateAdded;
+          else if (docData.lastUpdated) formattedDate = new Date(docData.lastUpdated).toLocaleDateString('en-GB');
+          else if (docData.date) formattedDate = new Date(docData.date).toLocaleDateString('en-GB');
+
+          monthlyAddedProductsList.push({
+            name: docData.name || docData.productName || 'Unnamed Product',
+            category: docData.category || docData.categoryName || 'General',
+            quantity: qty,
+            rate: price,
+            total: totalVal,
+            dateAdded: formattedDate
+          });
+        }
       }
     });
 
@@ -414,10 +521,11 @@ export default function ExpensesAndProfit() {
       addedInventoryItemsCount,
       totalStockPresentValue,
       monthlyAddedProductsList,
+      completeStockInventoryList,
       netPayCustomerList,
       creditCustomerList
     };
-  }, [salesData, monthlyExpenseList, inventoryCategories, inventoryCostMap, selectedMonth]);
+  }, [salesData, monthlyExpenseList, inventoryCategories, monthlyInventories, inventoryCostMap, selectedMonth]);
 
   // Handle PDF Print Execution
   const handleExecutePrint = () => {
@@ -635,7 +743,7 @@ export default function ExpensesAndProfit() {
           <div className="text-center space-y-1">
             <h1 className="text-3xl font-black uppercase tracking-wider text-slate-900">CHAUDHARY TRADER</h1>
             <p className="text-xs font-bold text-orange-600 uppercase tracking-widest">
-              Complete Monthly Financial, Sales & Inventory Statement Report
+              Complete Monthly Financial, Sales & Stock Inventory Statement Report
             </p>
             <div className="w-full border-b-2 border-orange-500 my-2"></div>
           </div>
@@ -772,7 +880,7 @@ export default function ExpensesAndProfit() {
             </table>
           </div>
 
-          {/* 3. INVENTORY ADDED IN THIS MONTH */}
+          {/* 3. INVENTORY ADDED IN THIS MONTH SECTION */}
           <div className="space-y-1 pt-2 print-avoid-break">
             <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
               3. INVENTORY ADDED IN THIS MONTH ({selectedMonth})
@@ -782,6 +890,8 @@ export default function ExpensesAndProfit() {
                 <tr className="bg-slate-100 font-extrabold uppercase text-slate-600 border-b border-slate-200">
                   <th className="p-1.5">S.#</th>
                   <th className="p-1.5">Product Name</th>
+                  <th className="p-1.5">Category</th>
+                  <th className="p-1.5 text-center">Date Added</th>
                   <th className="p-1.5 text-center">Quantity Added</th>
                   <th className="p-1.5 text-right">Cost Rate (PKR)</th>
                   <th className="p-1.5 text-right">Total Price (PKR)</th>
@@ -793,23 +903,76 @@ export default function ExpensesAndProfit() {
                     <tr key={idx} className="font-semibold">
                       <td className="p-1.5">{idx + 1}</td>
                       <td className="p-1.5 font-bold">{prod.name}</td>
-                      <td className="p-1.5 text-center">{prod.quantity}</td>
+                      <td className="p-1.5 text-slate-600">{prod.category}</td>
+                      <td className="p-1.5 text-center">{prod.dateAdded || '-'}</td>
+                      <td className="p-1.5 text-center font-bold">{prod.quantity}</td>
                       <td className="p-1.5 text-right">PKR {prod.rate.toLocaleString()}</td>
                       <td className="p-1.5 text-right font-black">PKR {prod.total.toLocaleString()}</td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={5} className="p-2 text-center text-slate-400">
+                    <td colSpan={7} className="p-2 text-center text-slate-400">
                       No new inventory added into stock for this month
                     </td>
                   </tr>
                 )}
               </tbody>
+              <tfoot>
+                <tr className="bg-sky-50 font-black text-slate-900 border-t border-slate-300">
+                  <td colSpan={6} className="p-1.5 text-right uppercase">TOTAL ADDED INVENTORY PRICE THIS MONTH:</td>
+                  <td className="p-1.5 text-right text-sky-700">PKR {metrics.addedInventoryValue.toLocaleString()}</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
 
-          {/* 4. FINAL FINANCIAL SUMMARY SECTION AT THE BOTTOM */}
+          {/* 4. COMPLETE CURRENT STOCK / INVENTORY LIST SECTION */}
+          <div className="space-y-1 pt-2 print-avoid-break">
+            <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
+              4. COMPLETE CURRENT STOCK & ALL INVENTORY LIST
+            </h2>
+            <table className="w-full text-left text-[11px] border-collapse border border-slate-200">
+              <thead>
+                <tr className="bg-slate-100 font-extrabold uppercase text-slate-600 border-b border-slate-200">
+                  <th className="p-1.5">S.#</th>
+                  <th className="p-1.5">Product Name</th>
+                  <th className="p-1.5">Category</th>
+                  <th className="p-1.5 text-center">Available Stock Qty</th>
+                  <th className="p-1.5 text-right">Cost Rate (PKR)</th>
+                  <th className="p-1.5 text-right">Total Stock Value (PKR)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {metrics.completeStockInventoryList.length > 0 ? (
+                  metrics.completeStockInventoryList.map((prod, idx) => (
+                    <tr key={idx} className="font-semibold">
+                      <td className="p-1.5">{idx + 1}</td>
+                      <td className="p-1.5 font-bold">{prod.name}</td>
+                      <td className="p-1.5 text-slate-600">{prod.category}</td>
+                      <td className="p-1.5 text-center font-bold">{prod.quantity}</td>
+                      <td className="p-1.5 text-right">PKR {prod.rate.toLocaleString()}</td>
+                      <td className="p-1.5 text-right font-black">PKR {prod.total.toLocaleString()}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="p-2 text-center text-slate-400">
+                      No stock or inventory available in system
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr className="bg-amber-50 font-black text-slate-900 border-t border-slate-300">
+                  <td colSpan={5} className="p-1.5 text-right uppercase">TOTAL PRESENT STOCK VALUE:</td>
+                  <td className="p-1.5 text-right text-amber-700">PKR {metrics.totalStockPresentValue.toLocaleString()}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* 5. FINAL FINANCIAL SUMMARY SECTION AT THE BOTTOM */}
           <div className="border-2 border-orange-500 rounded-xl p-3 bg-orange-50/30 space-y-2 mt-4 print-avoid-break">
             <h3 className="text-xs font-black uppercase tracking-wider text-orange-700 border-b border-orange-200 pb-1 text-center">
               FINAL MONTHLY AUDIT & STOCK SUMMARY
