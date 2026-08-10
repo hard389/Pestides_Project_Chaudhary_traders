@@ -26,7 +26,9 @@ import {
   PackagePlus,
   Layers,
   Printer,
-  ShieldCheck
+  ShieldCheck,
+  Calendar,
+  TrendingUp
 } from 'lucide-react';
 
 // Firebase Imports
@@ -38,7 +40,9 @@ import {
   onSnapshot, 
   updateDoc,
   deleteDoc,
-  setDoc
+  setDoc,
+  increment,
+  getDoc
 } from 'firebase/firestore';
 
 // Data Interfaces
@@ -58,6 +62,19 @@ interface CategoryItem {
   code: string;
   createdAt?: string;
   products: Product[];
+}
+
+interface MonthlyProductRecord {
+  productId: number;
+  name: string;
+  addedInMonth: number;
+  costPrice: number;
+  lastUpdated?: string;
+}
+
+interface MonthlyInventoryDoc {
+  month: string; // Format: "YYYY-MM" (e.g., "2026-08")
+  items: Record<string, MonthlyProductRecord>;
 }
 
 interface CenterToast {
@@ -82,6 +99,7 @@ export default function Inventory() {
   
   // Real-time Firestore State
   const [categoryList, setCategoryList] = useState<CategoryItem[]>([]);
+  const [currentMonthRecord, setCurrentMonthRecord] = useState<MonthlyInventoryDoc | null>(null);
 
   // Active View State (Selected Category ID)
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
@@ -120,6 +138,14 @@ export default function Inventory() {
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
+
+  // Helper: Get Current Year-Month string (e.g. "2026-08")
+  const getCurrentMonthKey = (): string => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
+  };
 
   // Sync active bottom navbar tab based on route / location
   useEffect(() => {
@@ -203,17 +229,19 @@ export default function Inventory() {
     return user.email ? user.email.toLowerCase().trim() : user.uid;
   };
 
-  // Real-time Firestore Sync
+  // Real-time Firestore Sync for Categories & Monthly Inventories
   useEffect(() => {
     if (!currentUser) {
       setCategoryList([]);
+      setCurrentMonthRecord(null);
       return;
     }
 
     const userDocId = getUserDocId(currentUser);
-    const userCategoriesRef = collection(db, 'users', userDocId, 'inventory_categories');
     
-    const unsubscribe = onSnapshot(userCategoriesRef, (snapshot) => {
+    // 1. Subscribe to General Inventory Categories
+    const userCategoriesRef = collection(db, 'users', userDocId, 'inventory_categories');
+    const unsubCategories = onSnapshot(userCategoriesRef, (snapshot) => {
       const fetchedCategories: CategoryItem[] = snapshot.docs.map((docSnap) => {
         const data = docSnap.data();
         let productsList: Product[] = Array.isArray(data.products) ? data.products : [];
@@ -239,10 +267,33 @@ export default function Inventory() {
 
       setCategoryList(fetchedCategories);
     }, (error) => {
-      console.error("Firestore Listen Error:", error);
+      console.error("Firestore Category Listen Error:", error);
     });
 
-    return () => unsubscribe();
+    // 2. Subscribe to Current Month's Historical Inventory Document
+    const monthKey = getCurrentMonthKey();
+    const monthlyDocRef = doc(db, 'users', userDocId, 'monthly_inventories', monthKey);
+    const unsubMonthly = onSnapshot(monthlyDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setCurrentMonthRecord({
+          month: monthKey,
+          items: data.items || {}
+        });
+      } else {
+        setCurrentMonthRecord({
+          month: monthKey,
+          items: {}
+        });
+      }
+    }, (error) => {
+      console.error("Firestore Monthly Record Listen Error:", error);
+    });
+
+    return () => {
+      unsubCategories();
+      unsubMonthly();
+    };
   }, [currentUser]);
 
   const currentCategory = useMemo(() => {
@@ -376,7 +427,7 @@ export default function Inventory() {
     }
   };
 
-  // SAVE PRODUCT TO FIREBASE
+  // SAVE PRODUCT TO FIREBASE + ACCUMULATE MONTHLY INVENTORY ADDITION RECORD
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!productName || !costPrice || !currentUser) return;
@@ -403,8 +454,17 @@ export default function Inventory() {
 
       const defaultAvatar = 'https://images.unsplash.com/photo-1585314062340-f1a5a7c9328d?w=200&auto=format&fit=crop&q=80';
       const isEditMode = !!editingProduct;
+      const targetProductId = editingProduct ? editingProduct.id : Date.now();
+
+      let quantityAdditionDelta = 0;
+      const newQtyNumber = Number(productQuantity || '0');
 
       if (editingProduct) {
+        const oldQtyNumber = Number(editingProduct.quantity || '0');
+        if (newQtyNumber > oldQtyNumber) {
+          quantityAdditionDelta = newQtyNumber - oldQtyNumber;
+        }
+
         updatedProducts = updatedProducts.map((p) =>
           p.id === editingProduct.id
             ? { 
@@ -418,8 +478,10 @@ export default function Inventory() {
             : p
         );
       } else {
+        quantityAdditionDelta = newQtyNumber;
+
         const newProductObj: Product = {
-          id: Date.now(),
+          id: targetProductId,
           name: productName,
           quantity: productQuantity || '0',
           costPrice: costPrice,
@@ -430,7 +492,41 @@ export default function Inventory() {
         updatedProducts.unshift(newProductObj);
       }
 
+      // 1. Update General Inventory (Current Available Stock)
       await updateDoc(categoryDocRef, { products: updatedProducts });
+
+      // 2. Update Monthly Historical Inventory Record (YYYY-MM) if quantity was added
+      if (quantityAdditionDelta > 0) {
+        const monthKey = getCurrentMonthKey();
+        const monthlyDocRef = doc(db, 'users', userDocId, 'monthly_inventories', monthKey);
+
+        const monthlySnap = await getDoc(monthlyDocRef);
+        
+        if (!monthlySnap.exists()) {
+          // Initialize month document if not present
+          await setDoc(monthlyDocRef, {
+            month: monthKey,
+            items: {
+              [targetProductId]: {
+                productId: targetProductId,
+                name: productName,
+                addedInMonth: quantityAdditionDelta,
+                costPrice: Number(costPrice),
+                lastUpdated: new Date().toISOString()
+              }
+            }
+          });
+        } else {
+          // Accumulate additions atomically for existing monthly record
+          await updateDoc(monthlyDocRef, {
+            [`items.${targetProductId}.productId`]: targetProductId,
+            [`items.${targetProductId}.name`]: productName,
+            [`items.${targetProductId}.costPrice`]: Number(costPrice),
+            [`items.${targetProductId}.lastUpdated`]: new Date().toISOString(),
+            [`items.${targetProductId}.addedInMonth`]: increment(quantityAdditionDelta)
+          });
+        }
+      }
 
       setIsAddProductOpen(false);
       setEditingProduct(null);
@@ -438,12 +534,41 @@ export default function Inventory() {
       showCenterNotification(
         'success',
         isEditMode ? 'Product Updated!' : 'Product Saved!',
-        isEditMode ? `${productName} details updated.` : `${productName} added to top of list.`
+        isEditMode ? `${productName} details updated.` : `${productName} added with ${quantityAdditionDelta} added to August record.`
       );
     } catch (error) {
       console.error("Error saving product to Firebase:", error);
     }
   };
+
+  // CALCULATE MONTHLY METRICS
+  const monthlyMetrics = useMemo(() => {
+    const allProducts = categoryList.flatMap((c) => c.products || []);
+    
+    // Total Current Stock Count & Value
+    const totalCurrentStockCount = allProducts.reduce((sum, p) => sum + Number(p.quantity || 0), 0);
+    const totalCurrentStockValue = allProducts.reduce((sum, p) => sum + (Number(p.costPrice || 0) * Number(p.quantity || 0)), 0);
+
+    // Monthly Added Count & Value
+    let totalAddedThisMonthCount = 0;
+    let totalAddedThisMonthValue = 0;
+
+    if (currentMonthRecord && currentMonthRecord.items) {
+      Object.values(currentMonthRecord.items).forEach((item) => {
+        const addedQty = Number(item.addedInMonth || 0);
+        const price = Number(item.costPrice || 0);
+        totalAddedThisMonthCount += addedQty;
+        totalAddedThisMonthValue += (addedQty * price);
+      });
+    }
+
+    return {
+      totalCurrentStockCount,
+      totalCurrentStockValue,
+      totalAddedThisMonthCount,
+      totalAddedThisMonthValue
+    };
+  }, [categoryList, currentMonthRecord]);
 
   // PRINT INVOICE FUNCTION
   const handleConfirmAndPrint = () => {
@@ -613,25 +738,28 @@ export default function Inventory() {
               <thead>
                 <tr>
                   <th style="width: 8%;">S.#</th>
-                  <th style="width: 42%;">Product Name</th>
-                  <th class="text-center" style="width: 15%;">Quantity</th>
-                  <th class="text-right" style="width: 17%;">Rate (PKR)</th>
-                  <th class="text-right" style="width: 18%;">Total (PKR)</th>
+                  <th style="width: 32%;">Product Name</th>
+                  <th class="text-center" style="width: 15%;">Added (Month)</th>
+                  <th class="text-center" style="width: 15%;">Current Qty</th>
+                  <th class="text-right" style="width: 15%;">Rate (PKR)</th>
+                  <th class="text-right" style="width: 15%;">Total (PKR)</th>
                 </tr>
               </thead>
               <tbody>
                 ${productsToPrint.length === 0 ? `
                   <tr>
-                    <td colspan="5" class="text-center" style="padding: 20px;">No products available to print.</td>
+                    <td colspan="6" class="text-center" style="padding: 20px;">No products available to print.</td>
                   </tr>
                 ` : productsToPrint.map((prod, idx) => {
                   const rate = Number(prod.costPrice || 0);
                   const qty = Number(prod.quantity || 0);
                   const itemTotal = rate * qty;
+                  const addedRecord = currentMonthRecord?.items?.[prod.id]?.addedInMonth || 0;
                   return `
                     <tr>
                       <td>${idx + 1}</td>
                       <td><strong>${prod.name}</strong></td>
+                      <td class="text-center">${addedRecord}</td>
                       <td class="text-center">${prod.quantity}</td>
                       <td class="text-right">PKR ${rate.toLocaleString()}</td>
                       <td class="text-right">PKR ${itemTotal.toLocaleString()}</td>
@@ -644,7 +772,7 @@ export default function Inventory() {
             <div class="summary-container">
               <div class="owner-section">
                 <div class="owner-title">Authorized Owner</div>
-                <div class="owner-name">Chaudhary Khalil Tahir </div>
+                <div class="owner-name">Chaudhary Khalil Tahir</div>
               </div>
 
               <div class="total-box">
@@ -792,6 +920,33 @@ export default function Inventory() {
                   </p>
                 </div>
 
+                {/* HISTORICAL MONTHLY VS CURRENT STOCK SUMMARY BANNER */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                  <div className="bg-white/80 dark:bg-[#070b13]/80 border border-orange-500/30 p-3.5 rounded-2xl flex items-center gap-3 backdrop-blur-sm shadow-sm">
+                    <div className="p-2.5 rounded-xl bg-orange-500/10 text-orange-500">
+                      <Calendar className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-slate-400">Inventory Added This Month ({getCurrentMonthKey()})</p>
+                      <p className="text-sm font-black text-slate-900 dark:text-white">
+                        {monthlyMetrics.totalAddedThisMonthCount} Units <span className="text-xs text-orange-500 font-extrabold">(PKR {monthlyMetrics.totalAddedThisMonthValue.toLocaleString()})</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white/80 dark:bg-[#070b13]/80 border border-emerald-500/30 p-3.5 rounded-2xl flex items-center gap-3 backdrop-blur-sm shadow-sm">
+                    <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-500">
+                      <TrendingUp className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase text-slate-400">Total Value Of Current Stock Present</p>
+                      <p className="text-sm font-black text-slate-900 dark:text-white">
+                        {monthlyMetrics.totalCurrentStockCount} Units <span className="text-xs text-emerald-500 font-extrabold">(PKR {monthlyMetrics.totalCurrentStockValue.toLocaleString()})</span>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex flex-wrap items-center gap-3 pt-2">
                   <Button
                     onClick={() => handleOpenAddProduct()}
@@ -936,7 +1091,8 @@ export default function Inventory() {
               {/* TABLE HEADER */}
               <div className="flex items-center gap-2 text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-wider px-2 py-1.5 border-b border-slate-100 dark:border-slate-800/60 w-full">
                 <div className="flex-1 min-w-0 pr-1">PRODUCT DETAILS</div>
-                <div className="w-10 sm:w-14 shrink-0 text-center">QTY</div>
+                <div className="w-14 shrink-0 text-center">ADDED (MONTH)</div>
+                <div className="w-10 sm:w-14 shrink-0 text-center">CURRENT STOCK</div>
                 <div className="hidden sm:block shrink-0 text-center sm:min-w-[75px]">COST PRICE</div>
                 <div className="shrink-0 text-right min-w-[46px] sm:min-w-[50px]">ACTIONS</div>
               </div>
@@ -947,64 +1103,75 @@ export default function Inventory() {
                   No products in this category.
                 </div>
               ) : (
-                paginatedProducts.map((product) => (
-                  <div
-                    key={product.id}
-                    className="flex items-center gap-2 px-2 py-2.5 rounded-2xl hover:bg-orange-500/5 dark:hover:bg-slate-900/60 transition-colors border-b border-slate-100 dark:border-slate-800/40 last:border-0 w-full group"
-                  >
-                    {/* PRODUCT NAME & IMAGE */}
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <img
-                        src={product.avatar}
-                        alt={product.name}
-                        className="h-8 w-8 sm:h-9 sm:w-9 rounded-xl object-cover shrink-0 border border-slate-200 dark:border-slate-800 shadow-sm bg-slate-100 dark:bg-slate-900"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p
-                          className="text-xs font-extrabold text-slate-900 dark:text-slate-100 leading-tight break-words"
-                          title={product.name}
+                paginatedProducts.map((product) => {
+                  const monthAddedCount = currentMonthRecord?.items?.[product.id]?.addedInMonth || 0;
+
+                  return (
+                    <div
+                      key={product.id}
+                      className="flex items-center gap-2 px-2 py-2.5 rounded-2xl hover:bg-orange-500/5 dark:hover:bg-slate-900/60 transition-colors border-b border-slate-100 dark:border-slate-800/40 last:border-0 w-full group"
+                    >
+                      {/* PRODUCT NAME & IMAGE */}
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <img
+                          src={product.avatar}
+                          alt={product.name}
+                          className="h-8 w-8 sm:h-9 sm:w-9 rounded-xl object-cover shrink-0 border border-slate-200 dark:border-slate-800 shadow-sm bg-slate-100 dark:bg-slate-900"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p
+                            className="text-xs font-extrabold text-slate-900 dark:text-slate-100 leading-tight break-words"
+                            title={product.name}
+                          >
+                            {product.name}
+                          </p>
+                          <p className="text-[9px] font-bold text-slate-400 mt-0.5 whitespace-nowrap">
+                            Cost: PKR {Number(product.costPrice || 0).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* HISTORICAL ADDED THIS MONTH */}
+                      <div className="w-14 shrink-0 text-center">
+                        <span className="bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-md border border-amber-500/20 inline-block text-[11px] sm:text-xs font-black">
+                          +{monthAddedCount}
+                        </span>
+                      </div>
+
+                      {/* CURRENT STOCK */}
+                      <div className="w-10 sm:w-14 shrink-0 text-center">
+                        <span className="bg-orange-500/10 text-orange-600 dark:text-orange-400 px-1.5 sm:px-2 py-0.5 rounded-md border border-orange-500/20 inline-block text-[11px] sm:text-xs font-black">
+                          {product.quantity}
+                        </span>
+                      </div>
+
+                      {/* COST PRICE */}
+                      <div className="hidden sm:block shrink-0 text-center sm:min-w-[75px]">
+                        <span className="text-[10px] sm:text-[11px] font-black text-emerald-600 dark:text-emerald-400 block whitespace-nowrap">
+                          PKR {Number(product.costPrice || 0).toLocaleString()}
+                        </span>
+                      </div>
+
+                      {/* ACTIONS */}
+                      <div className="shrink-0 flex items-center justify-end gap-1 min-w-[46px] sm:min-w-[50px]">
+                        <button
+                          onClick={() => handleOpenEditProduct(product)}
+                          className="p-1 sm:p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all active:scale-95"
+                          title="Edit Product"
                         >
-                          {product.name}
-                        </p>
-                        <p className="text-[9px] font-bold text-slate-400 mt-0.5 whitespace-nowrap">
-                          Cost: PKR {Number(product.costPrice || 0).toLocaleString()}
-                        </p>
+                          <Edit2 className="h-3 w-3" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirmProduct(product)}
+                          className="p-1 sm:p-1.5 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-all active:scale-95"
+                          title="Delete Product"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
                       </div>
                     </div>
-
-                    {/* QUANTITY */}
-                    <div className="w-10 sm:w-14 shrink-0 text-center">
-                      <span className="bg-orange-500/10 text-orange-600 dark:text-orange-400 px-1.5 sm:px-2 py-0.5 rounded-md border border-orange-500/20 inline-block text-[11px] sm:text-xs font-black">
-                        {product.quantity}
-                      </span>
-                    </div>
-
-                    {/* COST PRICE */}
-                    <div className="hidden sm:block shrink-0 text-center sm:min-w-[75px]">
-                      <span className="text-[10px] sm:text-[11px] font-black text-emerald-600 dark:text-emerald-400 block whitespace-nowrap">
-                        PKR {Number(product.costPrice || 0).toLocaleString()}
-                      </span>
-                    </div>
-
-                    {/* ACTIONS */}
-                    <div className="shrink-0 flex items-center justify-end gap-1 min-w-[46px] sm:min-w-[50px]">
-                      <button
-                        onClick={() => handleOpenEditProduct(product)}
-                        className="p-1 sm:p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all active:scale-95"
-                        title="Edit Product"
-                      >
-                        <Edit2 className="h-3 w-3" />
-                      </button>
-                      <button
-                        onClick={() => setDeleteConfirmProduct(product)}
-                        className="p-1 sm:p-1.5 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-all active:scale-95"
-                        title="Delete Product"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
 
               {/* PAGINATION CONTROLS */}
@@ -1299,7 +1466,7 @@ export default function Inventory() {
                 <label className="text-xs font-extrabold text-slate-700 dark:text-slate-300">Product Quantity</label>
                 <input
                   type="text"
-                  placeholder="e.g. 50 Bottles / 100 Packs"
+                  placeholder="e.g. 50"
                   value={productQuantity}
                   onChange={(e) => setProductQuantity(e.target.value)}
                   required
