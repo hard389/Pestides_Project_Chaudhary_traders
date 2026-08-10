@@ -30,21 +30,21 @@ import {
   Receipt,
   LogOut,
   Download,
-  Smartphone,
   Calendar,
   X,
   AlertTriangle,
   Info,
   Building2,
   Zap,
-  MoreHorizontal,
   Plus,
   Trash2,
   Package,
   CheckCircle2,
   Scale,
   Edit2,
-  Coffee
+  Coffee,
+  Printer,
+  ShieldCheck
 } from 'lucide-react';
 
 // Firebase Configuration
@@ -62,7 +62,7 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 const auth = getAuth(app);
 
-// Helper to format Date as YYYY-MM (Always fetches exact system current month)
+// Helper to format Date as YYYY-MM
 const getCurrentMonthKey = () => {
   const d = new Date();
   const year = d.getFullYear();
@@ -102,6 +102,9 @@ export default function ExpensesAndProfit() {
   const [quickAmount, setQuickAmount] = useState<string>('');
   const [quickReason, setQuickReason] = useState<string>('');
 
+  // Print Invoice Modal State
+  const [showPrintModal, setShowPrintModal] = useState(false);
+
   // PWA & Logout States
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isInstallable, setIsInstallable] = useState(false);
@@ -114,14 +117,14 @@ export default function ExpensesAndProfit() {
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState<'success' | 'error'>('success');
 
-  // Auto Month Auto-Check (If month rolls over while app is open)
+  // Auto Month Auto-Check
   useEffect(() => {
     const interval = setInterval(() => {
       const currentMonthNow = getCurrentMonthKey();
       if (selectedMonth !== currentMonthNow) {
         setSelectedMonth(currentMonthNow);
       }
-    }, 60000); // Checks every minute
+    }, 60000);
     return () => clearInterval(interval);
   }, [selectedMonth]);
 
@@ -274,7 +277,7 @@ export default function ExpensesAndProfit() {
     ) || monthlyExpenseList[0] || null;
   }, [monthlyExpenseList]);
 
-  // Handle Opening Fixed Expense Modal (Auto Pre-fills Previous/Existing Saved Data for that Month)
+  // Handle Opening Fixed Expense Modal
   const handleOpenFixedExpenseModal = () => {
     if (existingFixedExpense) {
       setEditingExpenseId(existingFixedExpense.id);
@@ -296,7 +299,11 @@ export default function ExpensesAndProfit() {
   const metrics = useMemo(() => {
     let totalSales = 0;
     let totalCredit = 0;
+    let totalNetCashSales = 0;
     let totalGrossProfit = 0;
+
+    const netPayCustomerList: any[] = [];
+    const creditCustomerList: any[] = [];
 
     salesData.forEach((sale) => {
       const saleDate = parseRecordDate(sale);
@@ -315,8 +322,31 @@ export default function ExpensesAndProfit() {
           saleCredit = Math.max(0, grandTotal - paidAmount);
         }
 
+        const customer = sale.customerName || sale.clientName || 'Cash Customer';
+        const netPaidForThisSale = Math.max(0, grandTotal - saleCredit);
+
         totalSales += grandTotal;
         totalCredit += saleCredit;
+        totalNetCashSales += netPaidForThisSale;
+
+        if (saleCredit > 0) {
+          creditCustomerList.push({
+            id: sale.id,
+            customerName: customer,
+            totalAmount: grandTotal,
+            creditAmount: saleCredit,
+            paidAmount: netPaidForThisSale,
+            date: saleDate.toLocaleDateString('en-GB')
+          });
+        } else {
+          netPayCustomerList.push({
+            id: sale.id,
+            customerName: customer,
+            totalAmount: grandTotal,
+            paidAmount: grandTotal,
+            date: saleDate.toLocaleDateString('en-GB')
+          });
+        }
 
         let saleProfit = 0;
         if (Array.isArray(sale.items)) {
@@ -345,18 +375,29 @@ export default function ExpensesAndProfit() {
 
     let addedInventoryValue = 0;
     let addedInventoryItemsCount = 0;
+    const monthlyAddedProductsList: any[] = [];
+
+    let totalStockPresentValue = 0;
 
     inventoryCategories.forEach((cat) => {
       if (Array.isArray(cat.products)) {
         cat.products.forEach((prod: any) => {
+          const price = Number(prod.costPrice || prod.salePrice || prod.purchasePrice || 0);
+          const qty = Number(prod.quantity || 0);
+          totalStockPresentValue += price * qty;
+
           const prodDate = parseRecordDate(prod);
           const prodMonthKey = `${prodDate.getFullYear()}-${String(prodDate.getMonth() + 1).padStart(2, '0')}`;
 
           if (prodMonthKey === selectedMonth) {
-            const price = Number(prod.costPrice || prod.salePrice || prod.purchasePrice || 0);
-            const qty = Number(prod.quantity || 1);
             addedInventoryValue += price * qty;
             addedInventoryItemsCount += 1;
+            monthlyAddedProductsList.push({
+              name: prod.name || 'Unnamed Product',
+              quantity: qty,
+              rate: price,
+              total: price * qty
+            });
           }
         });
       }
@@ -365,13 +406,26 @@ export default function ExpensesAndProfit() {
     return {
       totalSales,
       totalCredit,
+      totalNetCashSales,
       totalGrossProfit,
       totalExpenses,
       netProfit,
       addedInventoryValue,
-      addedInventoryItemsCount
+      addedInventoryItemsCount,
+      totalStockPresentValue,
+      monthlyAddedProductsList,
+      netPayCustomerList,
+      creditCustomerList
     };
   }, [salesData, monthlyExpenseList, inventoryCategories, inventoryCostMap, selectedMonth]);
+
+  // Handle PDF Print Execution
+  const handleExecutePrint = () => {
+    setShowPrintModal(false);
+    setTimeout(() => {
+      window.print();
+    }, 200);
+  };
 
   // Open Edit Modal for specific expense entry
   const handleOpenEdit = (exp: any) => {
@@ -539,12 +593,283 @@ export default function ExpensesAndProfit() {
     { label: 'Notification', icon: Bell, href: '/alerts' },
   ];
 
+  const currentDateFormatted = new Date().toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
+  const currentTimeFormatted = new Date().toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+
   return (
     <div className={`min-h-screen bg-[#f8fafc] dark:bg-[#070b13] text-slate-900 dark:text-slate-100 transition-colors duration-300 pb-36 ${isDark ? 'dark' : ''}`}>
 
+      {/* GLOBAL PRINT CSS RULES FOR PERFECT MULTI-PAGE FLOW */}
+      <style>{`
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 12mm;
+          }
+          body {
+            background: #ffffff !important;
+            color: #000000 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .print-avoid-break {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+        }
+      `}</style>
+
+      {/* PRINT REPORT STATEMENT LAYOUT (SHOWS ONLY ON PDF / PRINT) */}
+      <div className="hidden print:block print:w-full print:bg-white print:text-black print:p-0">
+        <div className="max-w-4xl mx-auto space-y-4 font-sans">
+          
+          {/* HEADER SECTION */}
+          <div className="text-center space-y-1">
+            <h1 className="text-3xl font-black uppercase tracking-wider text-slate-900">CHAUDHARY TRADER</h1>
+            <p className="text-xs font-bold text-orange-600 uppercase tracking-widest">
+              Complete Monthly Financial, Sales & Inventory Statement Report
+            </p>
+            <div className="w-full border-b-2 border-orange-500 my-2"></div>
+          </div>
+
+          <div className="border border-slate-300 rounded-xl p-3 flex justify-between text-xs font-bold text-slate-700 bg-slate-50 print-avoid-break">
+            <div className="space-y-1">
+              <p><span className="font-extrabold text-slate-900">Address:</span> Chak No 389 Jb Toba Tek Singh Punjab Pakistan</p>
+              <p><span className="font-extrabold text-slate-900">Phone:</span> +92 3261770389</p>
+              <p><span className="font-extrabold text-slate-900">Email:</span> alitahir243715@gmail.com</p>
+            </div>
+            <div className="space-y-1 text-right">
+              <p><span className="font-extrabold text-slate-900">Report Month:</span> {selectedMonth}</p>
+              <p><span className="font-extrabold text-slate-900">Print Date:</span> {currentDateFormatted}</p>
+              <p><span className="font-extrabold text-slate-900">Print Time:</span> {currentTimeFormatted}</p>
+            </div>
+          </div>
+
+          {/* 1. MONTHLY SALES BREAKDOWN SECTION */}
+          <div className="space-y-3">
+            <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
+              1. MONTHLY SALES STATEMENT ({selectedMonth})
+            </h2>
+
+            {/* A. NET PAY (CASH) CUSTOMERS */}
+            <div className="space-y-1 print-avoid-break">
+              <p className="text-[11px] font-extrabold text-emerald-700 uppercase">
+                A. Net Pay / Cash Customers (Paid Complete) - Total: PKR {metrics.totalNetCashSales.toLocaleString()}
+              </p>
+              <table className="w-full text-left text-[11px] border-collapse border border-slate-200">
+                <thead>
+                  <tr className="bg-slate-100 font-extrabold uppercase text-slate-600 border-b border-slate-200">
+                    <th className="p-1.5">S.#</th>
+                    <th className="p-1.5">Customer Name</th>
+                    <th className="p-1.5 text-center">Date</th>
+                    <th className="p-1.5 text-right">Paid Total (PKR)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {metrics.netPayCustomerList.length > 0 ? (
+                    metrics.netPayCustomerList.map((item, idx) => (
+                      <tr key={idx} className="font-semibold">
+                        <td className="p-1.5">{idx + 1}</td>
+                        <td className="p-1.5 font-bold">{item.customerName}</td>
+                        <td className="p-1.5 text-center">{item.date}</td>
+                        <td className="p-1.5 text-right font-black">PKR {item.totalAmount.toLocaleString()}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={4} className="p-2 text-center text-slate-400">No cash sales recorded in this month</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* B. CREDIT (UDHAAR) CUSTOMERS */}
+            <div className="space-y-1 pt-1 print-avoid-break">
+              <p className="text-[11px] font-extrabold text-rose-700 uppercase">
+                B. Credit (Udhaar) Customers Separate - Total Udhaar: PKR {metrics.totalCredit.toLocaleString()}
+              </p>
+              <table className="w-full text-left text-[11px] border-collapse border border-slate-200">
+                <thead>
+                  <tr className="bg-slate-100 font-extrabold uppercase text-slate-600 border-b border-slate-200">
+                    <th className="p-1.5">S.#</th>
+                    <th className="p-1.5">Customer Name</th>
+                    <th className="p-1.5 text-center">Date</th>
+                    <th className="p-1.5 text-right">Grand Total</th>
+                    <th className="p-1.5 text-right">Credit Amount (PKR)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {metrics.creditCustomerList.length > 0 ? (
+                    metrics.creditCustomerList.map((item, idx) => (
+                      <tr key={idx} className="font-semibold">
+                        <td className="p-1.5">{idx + 1}</td>
+                        <td className="p-1.5 font-bold">{item.customerName}</td>
+                        <td className="p-1.5 text-center">{item.date}</td>
+                        <td className="p-1.5 text-right">PKR {item.totalAmount.toLocaleString()}</td>
+                        <td className="p-1.5 text-right font-black text-rose-600">PKR {item.creditAmount.toLocaleString()}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="p-2 text-center text-slate-400">No credit sales recorded in this month</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* 2. MONTHLY EXPENSES SECTION */}
+          <div className="space-y-1 pt-2 print-avoid-break">
+            <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
+              2. MONTHLY EXPENSES BREAKDOWN ({selectedMonth})
+            </h2>
+            <table className="w-full text-left text-[11px] border-collapse border border-slate-200">
+              <thead>
+                <tr className="bg-slate-100 font-extrabold uppercase text-slate-600 border-b border-slate-200">
+                  <th className="p-1.5">Expense Entry / Description</th>
+                  <th className="p-1.5 text-right">Shop Rent</th>
+                  <th className="p-1.5 text-right">Electricity</th>
+                  <th className="p-1.5 text-right">Other / Hospitality</th>
+                  <th className="p-1.5 text-right">Subtotal (PKR)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {monthlyExpenseList.length > 0 ? (
+                  monthlyExpenseList.map((exp, idx) => {
+                    const rowTotal = (Number(exp.shopRent) || 0) + (Number(exp.electricityBill) || 0) + (Number(exp.otherExpenses) || 0);
+                    return (
+                      <tr key={idx} className="font-semibold">
+                        <td className="p-1.5 font-bold">{exp.note || 'Monthly Fixed Expense Entry'}</td>
+                        <td className="p-1.5 text-right">PKR {Number(exp.shopRent || 0).toLocaleString()}</td>
+                        <td className="p-1.5 text-right">PKR {Number(exp.electricityBill || 0).toLocaleString()}</td>
+                        <td className="p-1.5 text-right">PKR {Number(exp.otherExpenses || 0).toLocaleString()}</td>
+                        <td className="p-1.5 text-right font-black">PKR {rowTotal.toLocaleString()}</td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="p-2 text-center text-slate-400">No expense recorded for this month</td>
+                  </tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr className="bg-orange-50 font-black text-slate-900 border-t border-slate-300">
+                  <td colSpan={4} className="p-1.5 text-right uppercase">TOTAL MONTHLY EXPENSES:</td>
+                  <td className="p-1.5 text-right text-orange-600">PKR {metrics.totalExpenses.toLocaleString()}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* 3. INVENTORY ADDED IN THIS MONTH */}
+          <div className="space-y-1 pt-2 print-avoid-break">
+            <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
+              3. INVENTORY ADDED IN THIS MONTH ({selectedMonth})
+            </h2>
+            <table className="w-full text-left text-[11px] border-collapse border border-slate-200">
+              <thead>
+                <tr className="bg-slate-100 font-extrabold uppercase text-slate-600 border-b border-slate-200">
+                  <th className="p-1.5">S.#</th>
+                  <th className="p-1.5">Product Name</th>
+                  <th className="p-1.5 text-center">Quantity Added</th>
+                  <th className="p-1.5 text-right">Cost Rate (PKR)</th>
+                  <th className="p-1.5 text-right">Total Price (PKR)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {metrics.monthlyAddedProductsList.length > 0 ? (
+                  metrics.monthlyAddedProductsList.map((prod, idx) => (
+                    <tr key={idx} className="font-semibold">
+                      <td className="p-1.5">{idx + 1}</td>
+                      <td className="p-1.5 font-bold">{prod.name}</td>
+                      <td className="p-1.5 text-center">{prod.quantity}</td>
+                      <td className="p-1.5 text-right">PKR {prod.rate.toLocaleString()}</td>
+                      <td className="p-1.5 text-right font-black">PKR {prod.total.toLocaleString()}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="p-2 text-center text-slate-400">
+                      No new inventory added into stock for this month
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 4. FINAL FINANCIAL SUMMARY SECTION AT THE BOTTOM */}
+          <div className="border-2 border-orange-500 rounded-xl p-3 bg-orange-50/30 space-y-2 mt-4 print-avoid-break">
+            <h3 className="text-xs font-black uppercase tracking-wider text-orange-700 border-b border-orange-200 pb-1 text-center">
+              FINAL MONTHLY AUDIT & STOCK SUMMARY
+            </h3>
+            
+            <div className="grid grid-cols-2 gap-2 text-xs font-extrabold">
+              <div className="flex justify-between border-b border-slate-200 pb-1">
+                <span className="text-slate-600">Inventory Added In This Month Price:</span>
+                <span className="text-slate-900 font-black">PKR {metrics.addedInventoryValue.toLocaleString()}</span>
+              </div>
+
+              <div className="flex justify-between border-b border-slate-200 pb-1">
+                <span className="text-slate-600">Total Value Of Stock Present:</span>
+                <span className="text-slate-900 font-black">PKR {metrics.totalStockPresentValue.toLocaleString()}</span>
+              </div>
+
+              <div className="flex justify-between border-b border-slate-200 pb-1">
+                <span className="text-slate-600">Total Month Sales Revenue:</span>
+                <span className="text-slate-900 font-black">PKR {metrics.totalSales.toLocaleString()}</span>
+              </div>
+
+              <div className="flex justify-between border-b border-slate-200 pb-1">
+                <span className="text-slate-600">Gross Profit Of Month:</span>
+                <span className="text-emerald-700 font-black">PKR {metrics.totalGrossProfit.toLocaleString()}</span>
+              </div>
+
+              <div className="flex justify-between border-b border-slate-200 pb-1">
+                <span className="text-slate-600">Expense Of Month:</span>
+                <span className="text-orange-600 font-black">PKR {metrics.totalExpenses.toLocaleString()}</span>
+              </div>
+
+              <div className="flex justify-between border-b border-slate-200 pb-1">
+                <span className="text-slate-600">After Expense Net Profit:</span>
+                <span className={`font-black ${metrics.netProfit >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                  PKR {metrics.netProfit.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-slate-200 flex items-center justify-between text-xs print-avoid-break">
+            <div className="border border-dashed border-slate-300 rounded-xl p-2 text-center w-52">
+              <p className="text-[10px] font-black uppercase text-slate-400">AUTHORIZED OWNER</p>
+              <p className="text-xs font-black text-slate-900">Chaudhary Khalil Tahir</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] font-black uppercase text-slate-400">NET MONTH PROFIT</p>
+              <p className="text-xl font-black text-emerald-600">PKR {metrics.netProfit.toLocaleString()}</p>
+            </div>
+          </div>
+
+          <div className="pt-2 text-center text-[10px] text-slate-400 font-medium print-avoid-break">
+            This is an official computer-generated monthly statement report for Chaudhary Trader.
+          </div>
+        </div>
+      </div>
+
       {/* TOAST NOTIFICATION */}
       {showToast && (
-        <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-[110] text-white font-extrabold text-xs sm:text-sm px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border animate-in fade-in zoom-in-95 ${
+        <div className={`print:hidden fixed top-5 left-1/2 -translate-x-1/2 z-[110] text-white font-extrabold text-xs sm:text-sm px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border animate-in fade-in zoom-in-95 ${
           toastType === 'error'
             ? 'bg-rose-600 border-rose-400 shadow-[0_0_30px_rgba(225,19,72,0.5)]'
             : 'bg-emerald-600 border-emerald-400 shadow-[0_0_30px_rgba(16,185,129,0.5)]'
@@ -557,9 +882,41 @@ export default function ExpensesAndProfit() {
         </div>
       )}
 
+      {/* PRINT CONFIRMATION MODAL */}
+      {showPrintModal && (
+        <div className="print:hidden fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-[2.5rem] bg-white dark:bg-[#0c1222] p-6 border border-slate-200 dark:border-slate-800 shadow-2xl text-center space-y-4 animate-in zoom-in-95">
+            <div className="mx-auto h-14 w-14 rounded-full bg-orange-500/10 text-orange-500 flex items-center justify-center border border-orange-500/20">
+              <ShieldCheck className="h-8 w-8" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white">Print Monthly Report?</h3>
+              <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                Allow app to generate official <span className="text-orange-500 font-black">Chaudhary Trader</span> monthly sales, expense & stock report.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                onClick={() => setShowPrintModal(false)}
+                className="flex-1 py-3 rounded-2xl border border-slate-200 dark:border-slate-800 font-extrabold text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExecutePrint}
+                className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 text-white font-extrabold text-xs shadow-lg hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                <Printer className="h-4 w-4" />
+                <span>Allow & Print</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* LOGOUT CONFIRMATION MODAL */}
       {showConfirmModal && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="print:hidden fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-[#0c1222] p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4">
             <h3 className="text-lg font-black text-slate-900 dark:text-white">Confirm Logout</h3>
             <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
@@ -586,7 +943,7 @@ export default function ExpensesAndProfit() {
       )}
 
       {/* HEADER BAR */}
-      <div className="w-full bg-white/70 dark:bg-[#070b13]/80 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-800/60 sticky top-0 z-40">
+      <div className="print:hidden w-full bg-white/70 dark:bg-[#070b13]/80 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-800/60 sticky top-0 z-40">
         <div className="mx-auto max-w-2xl flex h-16 items-center justify-between px-4">
           <span className="font-black text-xl tracking-tight bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent">
             Chaudhary Traders
@@ -636,7 +993,18 @@ export default function ExpensesAndProfit() {
         </div>
       </div>
 
-      <main className="mx-auto max-w-2xl px-4 py-6 space-y-6">
+      <main className="print:hidden mx-auto max-w-2xl px-4 py-6 space-y-6">
+
+        {/* PRINT MONTHLY REPORT BUTTON */}
+        <div className="flex justify-start">
+          <button
+            onClick={() => setShowPrintModal(true)}
+            className="w-full sm:w-auto px-6 py-3 rounded-full border-2 border-orange-500/80 bg-white dark:bg-[#0c1222] text-orange-500 font-black text-sm flex items-center justify-center gap-2 shadow-md hover:bg-orange-500 hover:text-white transition-all active:scale-95"
+          >
+            <Printer className="h-5 w-5" />
+            <span>Print Monthly Report</span>
+          </button>
+        </div>
 
         {/* HERO TITLE CARD & MONTH FILTER */}
         <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-amber-50/80 via-white to-orange-50/40 dark:from-[#0c1222] dark:via-[#0e162a] dark:to-[#070b13] p-6 border-2 border-orange-500/80 shadow-[0_0_30px_rgba(249,115,22,0.25)]">
@@ -840,7 +1208,7 @@ export default function ExpensesAndProfit() {
                 <p className="text-xl font-black text-slate-900 dark:text-white">
                   Rs. {metrics.totalExpenses.toLocaleString()}
                 </p>
-                <p className="text-[10px] font-extrabold text-orange-500">Includes Shop, Bills & Cold Drinks</p>
+                <p className="text-[10px] font-extrabold text-orange-500">Includes Shop, Bills & Hospitality</p>
               </div>
               <div className="h-11 w-11 rounded-2xl bg-orange-500/10 text-orange-500 flex items-center justify-center">
                 <Receipt className="h-6 w-6 stroke-[2.5]" />
@@ -895,12 +1263,16 @@ export default function ExpensesAndProfit() {
               {metrics.addedInventoryItemsCount} New product batches inserted into stock
             </p>
           </div>
-          <div className="h-12 w-12 rounded-2xl bg-sky-500/10 text-sky-500 flex items-center justify-center">
+          <button
+            onClick={() => setShowPrintModal(true)}
+            className="h-12 w-12 rounded-2xl bg-sky-500/10 text-sky-500 flex items-center justify-center hover:scale-110 active:scale-95 transition-all"
+            title="Print Report"
+          >
             <Plus className="h-7 w-7 stroke-[2.5]" />
-          </div>
+          </button>
         </div>
 
-        {/* RECORDED EXPENSES BREAKDOWN LIST WITH FULL SAVED DETAILS */}
+        {/* RECORDED EXPENSES BREAKDOWN LIST */}
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
             <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">
@@ -937,7 +1309,6 @@ export default function ExpensesAndProfit() {
                       </div>
 
                       <div className="flex items-center gap-1">
-                        {/* EDIT EXPENSE BUTTON */}
                         <button
                           onClick={() => handleOpenEdit(exp)}
                           title="Edit Expense"
@@ -945,8 +1316,6 @@ export default function ExpensesAndProfit() {
                         >
                           <Edit2 className="h-4 w-4" />
                         </button>
-
-                        {/* DELETE EXPENSE BUTTON */}
                         <button
                           onClick={() => handleDeleteExpense(exp.id)}
                           title="Delete Expense"
@@ -957,7 +1326,6 @@ export default function ExpensesAndProfit() {
                       </div>
                     </div>
 
-                    {/* PREVIOUSLY ENTERED DETAILED BREAKDOWN */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       {exp.shopRent > 0 && (
                         <div className="p-2.5 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-between">
@@ -1023,7 +1391,7 @@ export default function ExpensesAndProfit() {
 
       {/* EDIT / ADD FIXED EXPENSES MODAL */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="print:hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-md rounded-[2.5rem] bg-white dark:bg-[#0c1222] p-6 border-2 border-orange-500/50 shadow-2xl space-y-5 animate-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
@@ -1041,7 +1409,6 @@ export default function ExpensesAndProfit() {
             </div>
 
             <form onSubmit={handleSaveExpenses} className="space-y-4">
-              {/* SHOP RENT */}
               <div className="space-y-1">
                 <label className="text-xs font-black text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                   <Building2 className="h-4 w-4 text-orange-500" />
@@ -1056,7 +1423,6 @@ export default function ExpensesAndProfit() {
                 />
               </div>
 
-              {/* ELECTRICITY BILLS */}
               <div className="space-y-1">
                 <label className="text-xs font-black text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                   <Zap className="h-4 w-4 text-amber-500" />
@@ -1071,7 +1437,6 @@ export default function ExpensesAndProfit() {
                 />
               </div>
 
-              {/* ANOTHER / OTHER EXPENSES */}
               <div className="space-y-1">
                 <label className="text-xs font-black text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                   <Coffee className="h-4 w-4 text-indigo-500" />
@@ -1086,7 +1451,6 @@ export default function ExpensesAndProfit() {
                 />
               </div>
 
-              {/* NOTE */}
               <div className="space-y-1">
                 <label className="text-xs font-black text-slate-700 dark:text-slate-300">
                   Expense Description / Note
@@ -1123,7 +1487,7 @@ export default function ExpensesAndProfit() {
 
       {/* QUICK DAILY / CUSTOMER EXPENSE MODAL */}
       {isQuickExpenseOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="print:hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-sm rounded-[2.5rem] bg-white dark:bg-[#0c1222] p-6 border-2 border-amber-500/60 shadow-2xl space-y-5 animate-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
@@ -1189,7 +1553,7 @@ export default function ExpensesAndProfit() {
       )}
 
       {/* FLOATING BOTTOM NAVIGATION BAR */}
-      <div className="fixed bottom-6 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
+      <div className="print:hidden fixed bottom-6 left-0 right-0 z-50 flex justify-center px-4 pointer-events-none">
         <nav className="w-full max-w-lg bg-white/95 dark:bg-[#0c1222]/95 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800/80 rounded-full shadow-[0_10px_40px_rgba(0,0,0,0.08)] px-4 py-2.5 flex items-center justify-between pointer-events-auto">
           {navigationTabs.map((tab) => {
             const IconComponent = tab.icon;
