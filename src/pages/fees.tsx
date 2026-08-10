@@ -168,7 +168,7 @@ export default function StockOverview() {
     } catch (err) {
       console.error("Error fetching inventory data:", err);
       triggerError("Failed to fetch stock overview data!");
-    } fontally: {
+    } finally {
       setLoading(false);
     }
   };
@@ -213,7 +213,7 @@ export default function StockOverview() {
 
     products.forEach((p) => {
       const qty = safeNum(p.quantity);
-      const price = safeNum(p.salePrice);
+      const price = safeNum(p.costPrice);
       totalStockQty += qty;
       totalValuation += qty * price;
 
