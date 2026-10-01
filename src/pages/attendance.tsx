@@ -71,6 +71,7 @@ interface CartItem {
   name: string;
   quantity: number;
   price: number;
+  costPrice?: number;
   availableStock: number;
 }
 
@@ -78,7 +79,7 @@ interface CustomerBill {
   id: string;
   customerName: string;
   date: string;
-  items: { name: string; quantity: number; price: number; total: number }[];
+  items: { name: string; quantity: number; price: number; costPrice?: number; total: number }[];
   grandTotal: number;
   paymentType: 'CASH' | 'CREDIT';
   paidAmount: number;
@@ -155,7 +156,7 @@ export default function SellProduct() {
   // EDIT MODAL STATES
   const [editingBill, setEditingBill] = useState<CustomerBill | null>(null);
   const [editCustomerName, setEditCustomerName] = useState('');
-  const [editItems, setEditItems] = useState<{ id: string; name: string; quantity: number; price: number; total: number }[]>([]);
+  const [editItems, setEditItems] = useState<{ id: string; name: string; quantity: number; price: number; costPrice?: number; total: number }[]>([]);
   const [editPaymentType, setEditPaymentType] = useState<'CASH' | 'CREDIT'>('CASH');
   const [editPaidAmount, setEditPaidAmount] = useState<number | ''>('');
   const [editShowProductModal, setEditShowProductModal] = useState(false);
@@ -415,6 +416,7 @@ export default function SellProduct() {
                   name: prod.name || 'Pesticide Product',
                   quantity: 1,
                   price: prod.price || 0,
+                  costPrice: prod.costPrice || 0,
                   availableStock: prod.stock
                 });
                 addedCount++;
@@ -452,6 +454,7 @@ export default function SellProduct() {
       }
       updated[existingIndex].quantity = newQty;
       updated[existingIndex].price = Number(unitPrice);
+      updated[existingIndex].costPrice = prod.costPrice || 0;
       setCartItems(updated);
     } else {
       setCartItems(prev => [
@@ -461,6 +464,7 @@ export default function SellProduct() {
           name: prod.name || 'Pesticide Product',
           quantity: Number(quantity),
           price: Number(unitPrice),
+          costPrice: prod.costPrice || 0,
           availableStock: prod.stock
         }
       ]);
@@ -498,6 +502,59 @@ export default function SellProduct() {
     return { paid, credit };
   }, [paymentType, paidAmountInput, grandTotal]);
 
+  // Helper function to fetch Cost Price from General Inventory or Monthly Summaries / Inventories
+  const fetchCostPriceForProduct = async (prodId: string, prodName: string, currentMonthKey: string): Promise<number> => {
+    if (!currentUserEmail) return 0;
+
+    try {
+      // 1. First search in general_inventory
+      const genInvRef = doc(db, 'users', currentUserEmail, 'inventory_categories', 'general_inventory');
+      const genInvSnap = await getDoc(genInvRef);
+
+      if (genInvSnap.exists()) {
+        const genData = genInvSnap.data();
+        const genProducts = genData.products || [];
+        const foundGen = genProducts.find((p: any) => String(p.id) === String(prodId) || (p.name && p.name.trim().toLowerCase() === prodName.trim().toLowerCase()));
+        
+        if (foundGen && Number(foundGen.costPrice || 0) > 0) {
+          return Number(foundGen.costPrice);
+        }
+      }
+
+      // 2. If not found or costPrice is 0, check in current month's monthly_inventories
+      const monthInvRef = doc(db, 'users', currentUserEmail, 'monthly_inventories', currentMonthKey);
+      const monthInvSnap = await getDoc(monthInvRef);
+
+      if (monthInvSnap.exists()) {
+        const monthData = monthInvSnap.data();
+        const monthProducts = monthData.products || monthData.items || [];
+        const foundMonth = monthProducts.find((p: any) => String(p.id) === String(prodId) || (p.name && p.name.trim().toLowerCase() === prodName.trim().toLowerCase()));
+
+        if (foundMonth && Number(foundMonth.costPrice || 0) > 0) {
+          return Number(foundMonth.costPrice);
+        }
+      }
+
+      // 3. If still not found, search in monthly_summaries/stock logs if recorded
+      const summaryRef = doc(db, 'users', currentUserEmail, 'monthly_summaries', currentMonthKey);
+      const summarySnap = await getDoc(summaryRef);
+
+      if (summarySnap.exists()) {
+        const sumData = summarySnap.data();
+        const addedStock = sumData.addedStock || sumData.products || [];
+        const foundStock = addedStock.find((p: any) => String(p.id) === String(prodId) || (p.name && p.name.trim().toLowerCase() === prodName.trim().toLowerCase()));
+
+        if (foundStock && Number(foundStock.costPrice || 0) > 0) {
+          return Number(foundStock.costPrice);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching cost price:", err);
+    }
+
+    return 0;
+  };
+
   const handleSaveBill = async () => {
     if (!customerName.trim()) return triggerError("Please enter Customer Name!");
     if (cartItems.length === 0) return triggerError("Cart is empty! Add products first.");
@@ -507,16 +564,30 @@ export default function SellProduct() {
 
     try {
       const now = new Date();
+      const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+      // Resolve Cost Price for each item in the cart before saving sale
+      const resolvedItems = await Promise.all(
+        cartItems.map(async (i) => {
+          let resolvedCostPrice = i.costPrice || 0;
+          if (!resolvedCostPrice || resolvedCostPrice === 0) {
+            resolvedCostPrice = await fetchCostPriceForProduct(i.id, i.name, monthKey);
+          }
+          return {
+            name: i.name,
+            quantity: i.quantity,
+            price: i.price,
+            costPrice: resolvedCostPrice,
+            total: i.quantity * i.price
+          };
+        })
+      );
+
       const billData: CustomerBill = {
         id: `INV-${Date.now()}`,
         customerName: customerName.trim(),
         date: now.toISOString(),
-        items: cartItems.map(i => ({
-          name: i.name,
-          quantity: i.quantity,
-          price: i.price,
-          total: i.quantity * i.price
-        })),
+        items: resolvedItems,
         grandTotal: grandTotal,
         paymentType: paymentType,
         paidAmount: calculatedPayment.paid,
@@ -526,7 +597,6 @@ export default function SellProduct() {
       const billRef = doc(db, 'users', currentUserEmail, 'sales', billData.id);
       await setDoc(billRef, billData);
 
-      const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const summaryDocRef = doc(db, 'users', currentUserEmail, 'monthly_summaries', monthKey);
       const currentMonthSummary = monthlySummaries[monthKey] || { totalSales: 0, totalCredit: 0, totalPaid: 0 };
       
@@ -601,6 +671,7 @@ export default function SellProduct() {
       name: item.name,
       quantity: item.quantity,
       price: item.price,
+      costPrice: item.costPrice || 0,
       total: item.total
     })));
     setEditPaymentType(bill.paymentType || 'CASH');
@@ -620,6 +691,7 @@ export default function SellProduct() {
           name: prod.name,
           quantity: 1,
           price: prod.price || 0,
+          costPrice: prod.costPrice || 0,
           total: prod.price || 0
         }
       ];
@@ -675,6 +747,7 @@ export default function SellProduct() {
           name: i.name,
           quantity: i.quantity,
           price: i.price,
+          costPrice: i.costPrice || 0,
           total: i.quantity * i.price
         })),
         grandTotal: editGrandTotal,
@@ -1696,7 +1769,7 @@ export default function SellProduct() {
         </div>
       )}
 
-      {/* EDIT MODAL PRODUCT SELECTOR (EXACT SAME PRODUCT CARD STYLING) */}
+      {/* EDIT MODAL PRODUCT SELECTOR */}
       {editShowProductModal && (
         <div className="fixed inset-0 z-[230] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
           <div className="bg-[#f8fafc] dark:bg-[#070b13] border-2 border-orange-500/90 rounded-[32px] p-5 sm:p-6 max-w-md w-full shadow-[0_0_35px_rgba(249,115,22,0.35)] space-y-4 my-auto relative">
