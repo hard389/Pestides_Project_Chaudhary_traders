@@ -202,14 +202,20 @@ export default function ExpensesAndProfit() {
       categoriesSnap.forEach((docSnap) => {
         const catData = docSnap.data();
         cats.push({ id: docSnap.id, ...catData });
+        
+        let prodsList: any[] = [];
         if (Array.isArray(catData.products)) {
-          catData.products.forEach((prod: any) => {
-            if (prod.name) {
-              const cost = Number(prod.costPrice || prod.purchasePrice || 0);
-              costMap[prod.name.trim().toLowerCase()] = cost;
-            }
-          });
+          prodsList = catData.products;
+        } else if (catData.products && typeof catData.products === 'object') {
+          prodsList = Object.values(catData.products);
         }
+
+        prodsList.forEach((prod: any) => {
+          if (prod.name) {
+            const cost = Number(prod.costPrice || prod.purchasePrice || 0);
+            costMap[prod.name.trim().toLowerCase()] = cost;
+          }
+        });
       });
       setInventoryCategories(cats);
       setInventoryCostMap(costMap);
@@ -226,7 +232,7 @@ export default function ExpensesAndProfit() {
     fetchData();
   }, [currentUserEmail]);
 
-  // Real-time Monthly Inventories Listener (from monthly_inventories collection)
+  // Real-time Monthly Inventories Listener
   useEffect(() => {
     if (!currentUserEmail) return;
 
@@ -315,7 +321,7 @@ export default function ExpensesAndProfit() {
     setIsModalOpen(true);
   };
 
-  // Monthly Metrics Computation
+  // Monthly Metrics & Detailed Sold Items Computation
   const metrics = useMemo(() => {
     let totalSales = 0;
     let totalCredit = 0;
@@ -324,6 +330,11 @@ export default function ExpensesAndProfit() {
 
     const netPayCustomerList: any[] = [];
     const creditCustomerList: any[] = [];
+    const completeItemizedSalesList: any[] = [];
+
+    let totalSoldCostPrice = 0;
+    let totalSoldSalePrice = 0;
+    let totalSoldItemsProfit = 0;
 
     salesData.forEach((sale) => {
       const saleDate = parseRecordDate(sale);
@@ -369,15 +380,39 @@ export default function ExpensesAndProfit() {
         }
 
         let saleProfit = 0;
-        if (Array.isArray(sale.items)) {
-          sale.items.forEach((item: any) => {
-            const qty = Number(item.quantity || 1);
-            const sellPrice = Number(item.price || item.unitPrice || 0);
-            const prodKey = String(item.name || '').trim().toLowerCase();
+        let saleItemsRaw = sale.items || sale.products || [];
+        if (saleItemsRaw && typeof saleItemsRaw === 'object' && !Array.isArray(saleItemsRaw)) {
+          saleItemsRaw = Object.values(saleItemsRaw);
+        }
+
+        if (Array.isArray(saleItemsRaw)) {
+          saleItemsRaw.forEach((item: any) => {
+            const qty = Number(item.quantity || item.qty || 1);
+            const sellPrice = Number(item.price || item.unitPrice || item.salePrice || 0);
+            const prodKey = String(item.name || item.productName || '').trim().toLowerCase();
             const lookupCost = inventoryCostMap[prodKey] || 0;
             const costPrice = Number(item.costPrice || item.purchasePrice || lookupCost || 0);
 
-            saleProfit += (sellPrice - costPrice) * qty;
+            const itemCostTotal = costPrice * qty;
+            const itemSaleTotal = sellPrice * qty;
+            const itemProfit = itemSaleTotal - itemCostTotal;
+
+            saleProfit += itemProfit;
+            totalSoldCostPrice += itemCostTotal;
+            totalSoldSalePrice += itemSaleTotal;
+            totalSoldItemsProfit += itemProfit;
+
+            completeItemizedSalesList.push({
+              customerName: customer,
+              date: saleDate.toLocaleDateString('en-GB'),
+              itemName: item.name || item.productName || 'Unnamed Item',
+              quantity: qty,
+              costPrice: costPrice,
+              salePrice: sellPrice,
+              totalCost: itemCostTotal,
+              totalSale: itemSaleTotal,
+              profit: itemProfit
+            });
           });
         }
         totalGrossProfit += saleProfit;
@@ -393,36 +428,40 @@ export default function ExpensesAndProfit() {
 
     const netProfit = totalGrossProfit - totalExpenses;
 
-    // --- 1. TOTAL PRESENT STOCK VALUE (Calculated from General Inventory / inventory_categories) ---
+    // --- 1. TOTAL PRESENT STOCK VALUE ---
     const completeStockInventoryList: any[] = [];
     let totalStockPresentValue = 0;
 
     inventoryCategories.forEach((cat) => {
+      let prodsList: any[] = [];
       if (Array.isArray(cat.products)) {
-        cat.products.forEach((prod: any) => {
-          const price = Number(prod.costPrice || prod.purchasePrice || prod.salePrice || 0);
-          const qty = Number(prod.quantity || 0);
-          const totalVal = price * qty;
-          totalStockPresentValue += totalVal;
-
-          completeStockInventoryList.push({
-            name: prod.name || 'Unnamed Product',
-            category: cat.categoryName || cat.name || 'General',
-            quantity: qty,
-            rate: price,
-            total: totalVal
-          });
-        });
+        prodsList = cat.products;
+      } else if (cat.products && typeof cat.products === 'object') {
+        prodsList = Object.values(cat.products);
       }
+
+      prodsList.forEach((prod: any) => {
+        const price = Number(prod.costPrice || prod.purchasePrice || prod.salePrice || 0);
+        const qty = Number(prod.quantity || 0);
+        const totalVal = price * qty;
+        totalStockPresentValue += totalVal;
+
+        completeStockInventoryList.push({
+          name: prod.name || 'Unnamed Product',
+          category: cat.categoryName || cat.name || 'General',
+          quantity: qty,
+          rate: price,
+          total: totalVal
+        });
+      });
     });
 
-    // --- 2. INVENTORY ADDED IN THIS MONTH (Fetched directly from monthly_inventories collection) ---
+    // --- 2. INVENTORY ADDED IN THIS MONTH ---
     let addedInventoryValue = 0;
     let addedInventoryItemsCount = 0;
     const monthlyAddedProductsList: any[] = [];
 
     monthlyInventories.forEach((docData) => {
-      // Check if doc belongs to selectedMonth (e.g. Doc ID "2026-08" or monthKey field)
       const isMatch = 
         docData.id === selectedMonth || 
         docData.monthKey === selectedMonth || 
@@ -432,7 +471,6 @@ export default function ExpensesAndProfit() {
       if (isMatch) {
         let rawItems = docData.items || docData.products || docData.inventory || docData.categories || docData.productList;
         
-        // Handle Firestore Map / Dictionary structure (`items: { prodId: { ... } }`)
         if (rawItems && typeof rawItems === 'object' && !Array.isArray(rawItems)) {
           rawItems = Object.values(rawItems);
         }
@@ -523,7 +561,11 @@ export default function ExpensesAndProfit() {
       monthlyAddedProductsList,
       completeStockInventoryList,
       netPayCustomerList,
-      creditCustomerList
+      creditCustomerList,
+      completeItemizedSalesList,
+      totalSoldCostPrice,
+      totalSoldSalePrice,
+      totalSoldItemsProfit
     };
   }, [salesData, monthlyExpenseList, inventoryCategories, monthlyInventories, inventoryCostMap, selectedMonth]);
 
@@ -715,7 +757,7 @@ export default function ExpensesAndProfit() {
   return (
     <div className={`min-h-screen bg-[#f8fafc] dark:bg-[#070b13] text-slate-900 dark:text-slate-100 transition-colors duration-300 pb-36 ${isDark ? 'dark' : ''}`}>
 
-      {/* GLOBAL PRINT CSS RULES FOR PERFECT MULTI-PAGE FLOW */}
+      {/* GLOBAL PRINT CSS RULES */}
       <style>{`
         @media print {
           @page {
@@ -735,7 +777,7 @@ export default function ExpensesAndProfit() {
         }
       `}</style>
 
-      {/* PRINT REPORT STATEMENT LAYOUT (SHOWS ONLY ON PDF / PRINT) */}
+      {/* PRINT REPORT STATEMENT LAYOUT */}
       <div className="hidden print:block print:w-full print:bg-white print:text-black print:p-0">
         <div className="max-w-4xl mx-auto space-y-4 font-sans">
           
@@ -761,10 +803,60 @@ export default function ExpensesAndProfit() {
             </div>
           </div>
 
-          {/* 1. MONTHLY SALES BREAKDOWN SECTION */}
+          {/* 1. COMPLETE ITEMIZED SALES REPORT SECTION */}
+          <div className="space-y-2 print-avoid-break">
+            <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
+              1. COMPLETE ITEMIZED MONTHLY SALES & PROFIT REPORT ({selectedMonth})
+            </h2>
+            <table className="w-full text-left text-[11px] border-collapse border border-slate-200">
+              <thead>
+                <tr className="bg-slate-100 font-extrabold uppercase text-slate-600 border-b border-slate-200">
+                  <th className="p-1.5">S.#</th>
+                  <th className="p-1.5">Customer Name</th>
+                  <th className="p-1.5">Item Name</th>
+                  <th className="p-1.5 text-center">Date</th>
+                  <th className="p-1.5 text-center">Qty</th>
+                  <th className="p-1.5 text-right">Cost Price</th>
+                  <th className="p-1.5 text-right">Sale Price</th>
+                  <th className="p-1.5 text-right">Total Profit</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {metrics.completeItemizedSalesList.length > 0 ? (
+                  metrics.completeItemizedSalesList.map((item, idx) => (
+                    <tr key={idx} className="font-semibold">
+                      <td className="p-1.5">{idx + 1}</td>
+                      <td className="p-1.5 font-bold">{item.customerName}</td>
+                      <td className="p-1.5">{item.itemName}</td>
+                      <td className="p-1.5 text-center">{item.date}</td>
+                      <td className="p-1.5 text-center font-bold">{item.quantity}</td>
+                      <td className="p-1.5 text-right">PKR {item.costPrice.toLocaleString()}</td>
+                      <td className="p-1.5 text-right">PKR {item.salePrice.toLocaleString()}</td>
+                      <td className="p-1.5 text-right font-black text-emerald-700">PKR {item.profit.toLocaleString()}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={8} className="p-2 text-center text-slate-400">No itemized sales recorded for this month</td>
+                  </tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr className="bg-emerald-50 font-black text-slate-900 border-t border-slate-300">
+                  <td colSpan={4} className="p-1.5 text-right uppercase">TOTALS:</td>
+                  <td className="p-1.5 text-center">{metrics.completeItemizedSalesList.reduce((acc, curr) => acc + curr.quantity, 0)}</td>
+                  <td className="p-1.5 text-right text-slate-800">PKR {metrics.totalSoldCostPrice.toLocaleString()}</td>
+                  <td className="p-1.5 text-right text-slate-800">PKR {metrics.totalSoldSalePrice.toLocaleString()}</td>
+                  <td className="p-1.5 text-right text-emerald-700">PKR {metrics.totalSoldItemsProfit.toLocaleString()}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* 2. CUSTOMER PAYMENT SUMMARY SECTION */}
           <div className="space-y-3">
             <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-              1. MONTHLY SALES STATEMENT ({selectedMonth})
+              2. CUSTOMER PAYMENTS SUMMARY ({selectedMonth})
             </h2>
 
             {/* A. NET PAY (CASH) CUSTOMERS */}
@@ -836,10 +928,10 @@ export default function ExpensesAndProfit() {
             </div>
           </div>
 
-          {/* 2. MONTHLY EXPENSES SECTION */}
+          {/* 3. MONTHLY EXPENSES SECTION */}
           <div className="space-y-1 pt-2 print-avoid-break">
             <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-              2. MONTHLY EXPENSES BREAKDOWN ({selectedMonth})
+              3. MONTHLY EXPENSES BREAKDOWN ({selectedMonth})
             </h2>
             <table className="w-full text-left text-[11px] border-collapse border border-slate-200">
               <thead>
@@ -880,10 +972,10 @@ export default function ExpensesAndProfit() {
             </table>
           </div>
 
-          {/* 3. INVENTORY ADDED IN THIS MONTH SECTION */}
+          {/* 4. INVENTORY ADDED IN THIS MONTH SECTION */}
           <div className="space-y-1 pt-2 print-avoid-break">
             <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-              3. INVENTORY ADDED IN THIS MONTH ({selectedMonth})
+              4. INVENTORY ADDED IN THIS MONTH ({selectedMonth})
             </h2>
             <table className="w-full text-left text-[11px] border-collapse border border-slate-200">
               <thead>
@@ -927,10 +1019,10 @@ export default function ExpensesAndProfit() {
             </table>
           </div>
 
-          {/* 4. COMPLETE CURRENT STOCK / INVENTORY LIST SECTION */}
+          {/* 5. COMPLETE CURRENT STOCK / INVENTORY LIST SECTION */}
           <div className="space-y-1 pt-2 print-avoid-break">
             <h2 className="text-xs font-black uppercase tracking-wider text-slate-900 border-b border-slate-300 pb-1">
-              4. COMPLETE CURRENT STOCK & ALL INVENTORY LIST
+              5. COMPLETE CURRENT STOCK & ALL INVENTORY LIST
             </h2>
             <table className="w-full text-left text-[11px] border-collapse border border-slate-200">
               <thead>
@@ -972,7 +1064,7 @@ export default function ExpensesAndProfit() {
             </table>
           </div>
 
-          {/* 5. FINAL FINANCIAL SUMMARY SECTION AT THE BOTTOM */}
+          {/* 6. FINAL FINANCIAL SUMMARY SECTION AT THE BOTTOM */}
           <div className="border-2 border-orange-500 rounded-xl p-3 bg-orange-50/30 space-y-2 mt-4 print-avoid-break">
             <h3 className="text-xs font-black uppercase tracking-wider text-orange-700 border-b border-orange-200 pb-1 text-center">
               FINAL MONTHLY AUDIT & STOCK SUMMARY
